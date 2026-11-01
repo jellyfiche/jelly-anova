@@ -318,3 +318,207 @@ async def test_backup_stop_failures(monkeypatch):
     }
     with pytest.raises(OvenRefused):
         await backup_stop(FakeSession(FakeWS(first=(), reply=refuse)), "P", COOKER)
+
+
+# --- fix round 1 -------------------------------------------------------------
+
+
+class HungSession:
+    """ws_connect never returns until the gate opens."""
+
+    def __init__(self, ws=None):
+        self.gate = asyncio.Event()
+        self.ws = ws
+        self.calls = []
+
+    async def ws_connect(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        await self.gate.wait()
+        return self.ws
+
+
+async def test_close_during_connect_leaves_nothing_open():
+    ws = FakeWS()
+    session = HungSession(ws)
+    conn = make(session)
+    task = await started(conn)
+    await until(lambda: session.calls)
+    await asyncio.wait_for(conn.close(), 1)  # must not wait for the hung connect
+    session.gate.set()
+    await asyncio.wait_for(task, 1)
+    assert conn.status == []
+    assert conn._ws is None
+
+
+async def test_close_when_connect_finishes_just_as_it_closes():
+    ws = FakeWS()
+    conn = make(FakeSession(ws))
+    conn._closing = True  # close() won the race after ws_connect returned
+    with pytest.raises(OvenOffline):
+        await conn._open()
+    assert conn._ws is None
+
+
+async def test_send_with_hung_connect_gives_up_in_time():
+    session = HungSession()
+    conn = make(session)
+    task = await started(conn)
+    await until(lambda: session.calls)
+    with pytest.raises(OvenOffline):
+        await asyncio.wait_for(conn.send("CMD_APO_STOP", None, timeout=0.05), 1)
+    await stop(conn, task)
+
+
+async def test_backup_stop_hung_connect_gives_up(monkeypatch):
+    monkeypatch.setattr(connection, "CONNECT_TIMEOUT", 0.05)
+    with pytest.raises(OvenOffline):
+        await asyncio.wait_for(backup_stop(HungSession(), "P", COOKER), 1)
+
+
+async def test_ws_connect_gets_a_bounded_timeout():
+    session = FakeSession(FakeWS())
+    conn = make(session)
+    task = await started(conn)
+    await until(lambda: session.calls)
+    assert session.calls[0][1]["timeout"] is not None
+    await stop(conn, task)
+
+
+async def test_backup_stop_ignores_foreign_response():
+    def reply(sent):
+        ws.push({"command": "RESPONSE", "requestId": "not-mine", "payload": {"status": "error", "error": "x"}})
+        return ok(sent)
+
+    ws = FakeWS(first=(), reply=reply)
+    await backup_stop(FakeSession(ws), "P", COOKER)
+
+
+async def test_backup_stop_only_foreign_response_gets_no_reply(monkeypatch):
+    monkeypatch.setattr(connection, "BACKUP_WAIT", 0.05)
+
+    def reply(sent):
+        return {"command": "RESPONSE", "requestId": "not-mine", "payload": {"status": "ok"}}
+
+    with pytest.raises(OvenNoReply):
+        await backup_stop(FakeSession(FakeWS(first=(), reply=reply)), "P", COOKER)
+
+
+async def test_unexpected_error_does_not_end_run():
+    class Boom:
+        calls = 0
+
+        async def access_token(self):
+            Boom.calls += 1
+            if Boom.calls < 3:
+                raise RuntimeError("bug")
+            return "t"
+
+    session = FakeSession(FakeWS())
+    conn = make(session, auth=Boom())
+    task = await started(conn)
+    await until(lambda: session.calls)
+    assert not task.done()
+    await stop(conn, task)
+
+
+async def test_bad_callbacks_do_not_end_run_or_leak():
+    ws = FakeWS(first=(WIFI, report(FUTURE)))
+
+    def bad(*_):
+        raise RuntimeError("callback bug")
+
+    sleeps = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+        await asyncio.sleep(0)
+
+    conn = OvenConnection(FakeSession(ws), FakeAuth(), bad, bad, on_auth_failed=bad, sleep=fake_sleep)
+    task = asyncio.create_task(conn.run())
+    await until(lambda: ws.queue.empty())
+    await asyncio.sleep(0.01)
+    assert not task.done()
+    assert not ws.closed
+    ws.push(report("2999-06-01T00:00:00Z"))
+    await asyncio.sleep(0.01)
+    assert not task.done()
+    await conn.close()
+    await asyncio.wait_for(task, 1)
+
+
+async def test_junk_messages_leave_run_alive():
+    ws = FakeWS(first=(WIFI,))
+    conn = make(FakeSession(ws))
+    task = await started(conn)
+    await until(lambda: conn.cooker_id)
+    ws.queue.put_nowait(msg(aiohttp.WSMsgType.TEXT, "not json {"))
+    ws.queue.put_nowait(msg(aiohttp.WSMsgType.TEXT, "[1, 2]"))
+    ws.queue.put_nowait(msg(aiohttp.WSMsgType.TEXT, '"text"'))
+    ws.push({"command": "EVENT_APO_STATE", "payload": "junk"})
+    ws.push({"command": "EVENT_APO_STATE", "payload": {"state": {"nodes": 5, "updatedTimestamp": 7}}})
+    ws.push({"command": "EVENT_APO_WIFI_LIST", "payload": "x"})
+    ws.push(report(FUTURE))
+    await until(lambda: conn.states)
+    assert not task.done()
+    assert not ws.closed
+    await stop(conn, task)
+
+
+async def test_pending_send_fails_when_connection_drops():
+    ws = FakeWS()
+    conn = make(FakeSession(ws, FakeWS()))
+    task = await started(conn)
+    await until(lambda: conn.cooker_id)
+    sending = asyncio.create_task(conn.send("CMD_APO_STOP", None, timeout=5))
+    await until(lambda: ws.sent)
+    ws.end()
+    with pytest.raises(OvenOffline):
+        await asyncio.wait_for(sending, 1)
+    await stop(conn, task)
+
+
+async def test_pending_send_fails_when_ws_is_replaced():
+    old = FakeWS()
+    conn = make(FakeSession(old, FakeWS()))
+    await conn._open()
+    await until(lambda: conn.cooker_id)
+    sending = asyncio.create_task(conn.send("CMD_APO_STOP", None, timeout=5))
+    await until(lambda: old.sent)
+    old.closed = True  # closed, but its reader has not noticed yet
+    await conn._open()
+    with pytest.raises(OvenOffline):
+        await asyncio.wait_for(sending, 1)
+    await conn.close()
+
+
+async def test_close_during_send_fails_it():
+    ws = FakeWS()
+    conn = make(FakeSession(ws))
+    task = await started(conn)
+    await until(lambda: conn.cooker_id)
+    sending = asyncio.create_task(conn.send("CMD_APO_STOP", None, timeout=5))
+    await until(lambda: ws.sent)
+    await conn.close()
+    with pytest.raises(OvenOffline):
+        await asyncio.wait_for(sending, 1)
+    await asyncio.wait_for(task, 1)
+
+
+async def test_login_failure_logs_one_plain_warning(caplog):
+    caplog.set_level(logging.WARNING)
+    conn = make(FakeSession(FakeWS()), auth=FakeAuth(AuthFailed(SECRET)))
+    await asyncio.wait_for(conn.run(), 1)
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert SECRET not in caplog.text
+
+
+async def test_reader_closes_ws_when_it_ends_on_its_own():
+    ws = FakeWS()
+    conn = make(FakeSession(ws))
+    await conn._open()
+    ws.end()
+    await until(lambda: conn._ws is None)
+    await asyncio.wait([conn._reader])
+    assert ws.closed
+    await conn.close()

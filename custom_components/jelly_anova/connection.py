@@ -29,6 +29,7 @@ HEARTBEAT = 20
 FIRST_DELAY = 5
 MAX_DELAY = 300
 BACKUP_WAIT = 8  # seconds the backup stop waits for the oven's reply
+CONNECT_TIMEOUT = 15  # seconds allowed to fetch a token and open a websocket
 
 # Failures that mean "try again later". Their text is never logged.
 _RETRY_ERRORS = (CannotConnect, aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError)
@@ -100,7 +101,8 @@ class OvenConnection:
         self._ws: Any = None
         self._reader: asyncio.Task | None = None
         self._lock = asyncio.Lock()
-        self._pending: dict[str, asyncio.Future] = {}
+        self._pending: dict[str, tuple[Any, asyncio.Future]] = {}
+        self._connecting: asyncio.Future | None = None
         self._closing = False
         self._auth_reported = False
         self._delay = FIRST_DELAY
@@ -111,6 +113,18 @@ class OvenConnection:
 
     # --- opening and running -------------------------------------------------
 
+    async def _connect(self) -> Any:
+        """Fetch a fresh token and open the websocket (one bounded step)."""
+        token = await self._auth.access_token()
+        url = f"{HOST}?token={quote(token, safe='')}&supportedAccessories=APO&platform=ios"
+        async with asyncio.timeout(CONNECT_TIMEOUT):
+            return await self._session.ws_connect(
+                url,
+                protocols=(SUBPROTOCOL,),
+                heartbeat=HEARTBEAT,
+                timeout=aiohttp.ClientWSTimeout(ws_close=CONNECT_TIMEOUT),
+            )
+
     async def _open(self) -> None:
         """Open the websocket unless it is already open. Raises on failure."""
         async with self._lock:
@@ -118,25 +132,51 @@ class OvenConnection:
                 raise OvenOffline("Closed")
             if self._ws is not None and not self._ws.closed:
                 return
-            token = await self._auth.access_token()
-            url = f"{HOST}?token={quote(token, safe='')}&supportedAccessories=APO&platform=ios"
-            ws = await self._session.ws_connect(url, protocols=(SUBPROTOCOL,), heartbeat=HEARTBEAT)
+            task = asyncio.ensure_future(self._connect())
+            self._connecting = task
+            try:
+                ws = await task
+            except asyncio.CancelledError:
+                # close() cancels a connect in flight; a cancel of this caller passes on.
+                current = asyncio.current_task()
+                if self._closing and current is not None and current.cancelling() == 0:
+                    raise OvenOffline("Closed") from None
+                raise
+            finally:
+                self._connecting = None
+            if self._closing:  # close() ran while the connect was finishing
+                with contextlib.suppress(Exception):
+                    await ws.close()
+                raise OvenOffline("Closed")
+            if self._ws is not None:  # a closed socket whose reader has not noticed yet
+                if self._reader is not None:
+                    self._reader.cancel()
+                self._drop(self._ws)
             self._ws = ws
             self._connected_at = datetime.now(UTC)
             self._state = None
             self._reader = asyncio.create_task(self._read(ws))
             self._set_up(True)
 
+    def _safe(self, callback: Callable | None, *args: Any) -> None:
+        """Call a callback; a failing one is logged by type name and never stops us."""
+        if callback is None:
+            return
+        try:
+            callback(*args)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("A callback failed: %s", type(err).__name__)
+
     def _set_up(self, up: bool) -> None:
         if up != self._up:
             self._up = up
-            self._on_status(up)
+            self._safe(self._on_status, up)
 
     def _auth_failed(self) -> None:
         if not self._auth_reported:
             self._auth_reported = True
-            if self._on_auth_failed:
-                self._on_auth_failed()
+            _LOGGER.warning("Anova refused the login; signing in again is needed")
+            self._safe(self._on_auth_failed)
 
     async def run(self) -> None:
         """Stay connected until close(), or until the login is refused."""
@@ -147,9 +187,16 @@ class OvenConnection:
                 self._auth_failed()
                 return
             except OvenOffline:
-                return
+                if self._closing:
+                    return
+                await self._backoff()
+                continue
             except _RETRY_ERRORS as err:
                 _LOGGER.debug("Could not connect to Anova: %s", type(err).__name__)
+                await self._backoff()
+                continue
+            except Exception as err:  # noqa: BLE001 - run() must not die silently
+                _LOGGER.warning("Unexpected error connecting to Anova: %s", type(err).__name__)
                 await self._backoff()
                 continue
             if self._reader is not None:
@@ -169,18 +216,21 @@ class OvenConnection:
                 raise
 
     async def close(self) -> None:
-        """Stop run() and close the websocket."""
+        """Stop run() and close the websocket. Does not wait for a connect in flight."""
         self._closing = True
         if self._sleeper is not None:
             self._sleeper.cancel()
+        if self._connecting is not None:
+            self._connecting.cancel()
         reader, ws = self._reader, self._ws
         if reader is not None:
             reader.cancel()
             await asyncio.wait([reader])
         if ws is not None and not ws.closed:
-            with contextlib.suppress(*_RETRY_ERRORS):
+            with contextlib.suppress(Exception):
                 await ws.close()
-        self._drop(ws)
+        if ws is not None:
+            self._drop(ws)
 
     # --- reading -------------------------------------------------------------
 
@@ -191,23 +241,30 @@ class OvenConnection:
                 if message.type in _CLOSED_TYPES:
                     break
                 if message.type == aiohttp.WSMsgType.TEXT:
-                    self._handle(message.data)
+                    try:
+                        self._handle(message.data)
+                    except Exception as err:  # noqa: BLE001 - one bad message is not the end
+                        _LOGGER.debug("Could not handle a message: %s", type(err).__name__)
         except asyncio.CancelledError:
             raise
-        except _RETRY_ERRORS as err:
+        except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Anova connection dropped: %s", type(err).__name__)
         finally:
             self._drop(ws)
+            if not ws.closed:
+                with contextlib.suppress(Exception):
+                    await ws.close()
 
     def _drop(self, ws: Any) -> None:
-        if ws is not self._ws:
-            return
-        self._ws = None
-        for future in self._pending.values():
-            if not future.done():
-                future.set_exception(OvenOffline("Connection lost"))
-        self._pending.clear()
-        self._set_up(False)
+        """Fail the commands waiting on this ws; mark the connection down if it is the current one."""
+        for request_id, (owner, future) in list(self._pending.items()):
+            if owner is ws:
+                del self._pending[request_id]
+                if not future.done():
+                    future.set_exception(OvenOffline("Connection lost"))
+        if ws is self._ws:
+            self._ws = None
+            self._set_up(False)
 
     def _handle(self, text: str) -> None:
         try:
@@ -223,9 +280,9 @@ class OvenConnection:
         elif command == "EVENT_APO_STATE":
             self._handle_state(payload)
         elif command == "RESPONSE":
-            future = self._pending.pop(str(data.get("requestId")), None)
-            if future is not None and not future.done():
-                future.set_result(payload)
+            entry = self._pending.pop(str(data.get("requestId")), None)
+            if entry is not None and not entry[1].done():
+                entry[1].set_result(payload)
 
     def _handle_list(self, payload: Any) -> None:
         first = payload[0] if isinstance(payload, list) and payload else None
@@ -247,86 +304,103 @@ class OvenConnection:
             return
         self._state = state
         self._delay = FIRST_DELAY  # a live report proves the connection is healthy
-        self._on_state(state)
+        self._safe(self._on_state, state)
 
     # --- sending -------------------------------------------------------------
 
     async def send(self, command: str, payload: dict | None, timeout: float = 10) -> dict:
         """Send a command and return the oven's reply payload.
 
-        If the connection is down, one reconnect is tried first.
+        If the connection is down, one reconnect is tried first. The whole call, reconnect
+        included, is limited to `timeout`: OvenOffline if it ran out before the command was
+        written, OvenNoReply if after.
         """
-        if self._auth_reported:
-            raise OvenOffline("Login refused")
-        if self._ws is None or self._ws.closed:
-            try:
-                await self._open()
-            except _AUTH_ERRORS:
-                self._auth_failed()
-                raise OvenOffline("Login refused") from None
-            except _RETRY_ERRORS as err:
-                _LOGGER.debug("Reconnect for a command failed: %s", type(err).__name__)
-                raise OvenOffline("Cannot reach the oven's cloud") from None
-        if self.cooker_id is None:
-            try:
-                await asyncio.wait_for(self._cooker_known.wait(), timeout)
-            except TimeoutError:
-                raise OvenOffline("The oven has not been listed yet") from None
-        ws = self._ws
-        if ws is None:
-            raise OvenOffline("Connection lost")
-        request_id, text = _frame(command, self.cooker_id, payload)
-        future: asyncio.Future = asyncio.get_running_loop().create_future()
-        self._pending[request_id] = future
+        written = False
         try:
-            await ws.send_str(text)
-            reply = await asyncio.wait_for(future, timeout)
+            async with asyncio.timeout(timeout):
+                if self._auth_reported:
+                    raise OvenOffline("Login refused")
+                if self._ws is None or self._ws.closed:
+                    try:
+                        await self._open()
+                    except _AUTH_ERRORS:
+                        self._auth_failed()
+                        raise OvenOffline("Login refused") from None
+                    except OvenError:
+                        raise
+                    except _RETRY_ERRORS as err:
+                        _LOGGER.debug("Reconnect for a command failed: %s", type(err).__name__)
+                        raise OvenOffline("Cannot reach the oven's cloud") from None
+                if self.cooker_id is None:
+                    await self._cooker_known.wait()
+                ws = self._ws
+                if ws is None:
+                    raise OvenOffline("Connection lost")
+                request_id, text = _frame(command, self.cooker_id, payload)
+                future: asyncio.Future = asyncio.get_running_loop().create_future()
+                self._pending[request_id] = (ws, future)
+                try:
+                    written = True
+                    await ws.send_str(text)
+                    reply = await future
+                finally:
+                    self._pending.pop(request_id, None)
         except TimeoutError:
-            raise OvenNoReply("The oven did not answer") from None
+            if written:
+                raise OvenNoReply("The oven did not answer") from None
+            raise OvenOffline("Cannot reach the oven's cloud") from None
+        except OvenError:
+            raise
         except _RETRY_ERRORS as err:
             _LOGGER.debug("Could not send a command: %s", type(err).__name__)
             raise OvenOffline("Connection lost") from None
-        finally:
-            self._pending.pop(request_id, None)
         return _check(reply)
 
 
 async def backup_stop(session: aiohttp.ClientSession, personal_token: str, cooker_id: str) -> None:
     """Stop the oven over a separate connection that uses the personal token.
 
-    Proven on the real oven: the personal token works with no subprotocol.
+    Proven on the real oven: the personal token works with no subprotocol. The connect is
+    limited to CONNECT_TIMEOUT, the write and the wait for the reply to BACKUP_WAIT.
     """
     url = f"{HOST}?token={quote(personal_token, safe='')}&supportedAccessories=APO"
     try:
-        ws = await session.ws_connect(url)
+        async with asyncio.timeout(CONNECT_TIMEOUT):
+            ws = await session.ws_connect(
+                url, timeout=aiohttp.ClientWSTimeout(ws_close=CONNECT_TIMEOUT)
+            )
     except _RETRY_ERRORS as err:
         _LOGGER.debug("Backup stop could not connect: %s", type(err).__name__)
         raise OvenOffline("Cannot reach the oven's cloud") from None
     try:
         request_id, text = _frame("CMD_APO_STOP", cooker_id, None)
-        await ws.send_str(text)
-        loop = asyncio.get_running_loop()
-        end = loop.time() + BACKUP_WAIT
-        while (left := end - loop.time()) > 0:
-            try:
-                message = await asyncio.wait_for(ws.receive(), left)
-            except TimeoutError:
-                break
-            if message.type in _CLOSED_TYPES:
-                raise OvenOffline("Connection lost")
-            if message.type != aiohttp.WSMsgType.TEXT:
-                continue
-            try:
-                data = json.loads(message.data)
-            except ValueError:
-                continue
-            if isinstance(data, dict) and data.get("command") == "RESPONSE":
-                _check(data.get("payload"))
-                return
-        raise OvenNoReply("The oven did not answer")
+        try:
+            async with asyncio.timeout(BACKUP_WAIT):
+                await ws.send_str(text)
+                while True:
+                    message = await ws.receive()
+                    if message.type in _CLOSED_TYPES:
+                        raise OvenOffline("Connection lost")
+                    if message.type != aiohttp.WSMsgType.TEXT:
+                        continue
+                    try:
+                        data = json.loads(message.data)
+                    except ValueError:
+                        continue
+                    if (
+                        isinstance(data, dict)
+                        and data.get("command") == "RESPONSE"
+                        and data.get("requestId") == request_id
+                    ):
+                        _check(data.get("payload"))
+                        return
+        except TimeoutError:
+            raise OvenNoReply("The oven did not answer") from None
+    except OvenError:
+        raise
     except _RETRY_ERRORS as err:
         _LOGGER.debug("Backup stop failed: %s", type(err).__name__)
         raise OvenOffline("Connection lost") from None
     finally:
-        with contextlib.suppress(*_RETRY_ERRORS):
+        with contextlib.suppress(Exception):
             await ws.close()

@@ -181,7 +181,10 @@ async def test_every_design_entity_exists(hass, entry):
 async def test_nothing_unlisted_exists(hass, entry):
     registry = er.async_get(hass)
     expected = {f"{entry.entry_id}_{key}" for _, key, _ in DESIGN}
-    made = {e.unique_id for e in registry.entities.values() if e.platform == DOMAIN}
+    # Sensors and binary sensors only: the controls (button, number, switch, select) are in test_services.
+    made = {
+        e.unique_id for e in registry.entities.values() if e.platform == DOMAIN and e.domain in ("sensor", "binary_sensor")
+    }
     assert made == expected
 
 
@@ -349,7 +352,10 @@ async def test_disabled_values_come_from_the_report():
 def _names():
     strings = json.loads(STRINGS.read_text())["entity"]
     return {
-        (domain, key): value["name"] for domain, group in strings.items() for key, value in group.items()
+        (domain, key): value["name"]
+        for domain, group in strings.items()
+        if domain in ("sensor", "binary_sensor")  # the controls' names are checked in test_services
+        for key, value in group.items()
     }
 
 

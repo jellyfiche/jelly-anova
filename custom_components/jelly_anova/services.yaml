@@ -1,0 +1,320 @@
+start_cook:
+  fields:
+    temperature_f:
+      required: false
+      example: 350
+      selector:
+        number:
+          min: 50
+          max: 480
+          step: 1
+          unit_of_measurement: "°F"
+          mode: box
+    probe_f:
+      required: false
+      selector:
+        number:
+          min: 50
+          max: 480
+          step: 1
+          unit_of_measurement: "°F"
+          mode: box
+    minutes:
+      required: false
+      example: 30
+      selector:
+        number:
+          min: 1
+          max: 1440
+          step: 1
+          unit_of_measurement: min
+          mode: box
+    elements:
+      required: false
+      example: '["rear"]'
+      selector:
+        select:
+          multiple: true
+          options:
+            - top
+            - bottom
+            - rear
+    steam_percent:
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: slider
+    humidity:
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: slider
+    sous_vide:
+      required: false
+      default: false
+      selector:
+        boolean:
+    timer_mode:
+      required: false
+      default: Immediately
+      selector:
+        select:
+          options:
+            - Immediately
+            - When Preheated
+            - Manually
+            - When Food Detected
+            - When Food Removed
+    fan:
+      required: false
+      default: 100
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: slider
+    vent:
+      required: false
+      default: closed
+      selector:
+        select:
+          options:
+            - closed
+            - open-mid
+            - open-max
+    rack:
+      required: false
+      default: 3
+      selector:
+        number:
+          min: 1
+          max: 5
+          step: 1
+          mode: box
+    max_minutes:
+      required: false
+      example: 180
+      selector:
+        number:
+          min: 1
+          max: 1440
+          step: 1
+          unit_of_measurement: min
+          mode: box
+    temperature_c:
+      required: false
+      advanced: true
+      selector:
+        number:
+          min: 10
+          max: 249
+          step: 0.1
+          unit_of_measurement: "°C"
+          mode: box
+    probe_c:
+      required: false
+      advanced: true
+      selector:
+        number:
+          min: 10
+          max: 249
+          step: 0.1
+          unit_of_measurement: "°C"
+          mode: box
+    target_temperature_celsius:
+      required: false
+      advanced: true
+      selector:
+        number:
+          min: 10
+          max: 249
+          step: 0.1
+          unit_of_measurement: "°C"
+          mode: box
+    target_temperature_fahrenheit:
+      required: false
+      advanced: true
+      selector:
+        number:
+          min: 50
+          max: 480
+          step: 1
+          unit_of_measurement: "°F"
+          mode: box
+    temperature_probe_celsius:
+      required: false
+      advanced: true
+      selector:
+        number:
+          min: 10
+          max: 249
+          step: 0.1
+          unit_of_measurement: "°C"
+          mode: box
+    temperature_probe_fahrenheit:
+      required: false
+      advanced: true
+      selector:
+        number:
+          min: 50
+          max: 480
+          step: 1
+          unit_of_measurement: "°F"
+          mode: box
+    target_humidity:
+      required: false
+      advanced: true
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: slider
+    heating_top:
+      required: false
+      advanced: true
+      selector:
+        boolean:
+    heating_bottom:
+      required: false
+      advanced: true
+      selector:
+        boolean:
+    heating_rear:
+      required: false
+      advanced: true
+      selector:
+        boolean:
+    timer:
+      required: false
+      advanced: true
+      selector:
+        duration:
+
+start_custom_cook:
+  fields:
+    config:
+      required: true
+      selector:
+        text:
+          multiline: true
+    max_minutes:
+      required: false
+      example: 180
+      selector:
+        number:
+          min: 1
+          max: 1440
+          step: 1
+          unit_of_measurement: min
+          mode: box
+
+stop_cook:
+  fields:
+    cook_id:
+      required: false
+      example: ios-1234
+      selector:
+        text:
+
+update_cook:
+  fields:
+    temperature_f:
+      required: false
+      selector:
+        number:
+          min: 50
+          max: 480
+          step: 1
+          unit_of_measurement: "°F"
+          mode: box
+    temperature_c:
+      required: false
+      advanced: true
+      selector:
+        number:
+          min: 10
+          max: 249
+          step: 0.1
+          unit_of_measurement: "°C"
+          mode: box
+    steam_percent:
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: slider
+    humidity:
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: slider
+    fan:
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: slider
+    vent:
+      required: false
+      selector:
+        select:
+          options:
+            - closed
+            - open-mid
+            - open-max
+    timer:
+      required: false
+      selector:
+        duration:
+    elements:
+      required: false
+      selector:
+        select:
+          multiple: true
+          options:
+            - top
+            - bottom
+            - rear
+    start_timer:
+      required: false
+      default: false
+      selector:
+        boolean:
+
+next_stage:
+  fields:
+    stage_id:
+      required: true
+      example: ios-1234
+      selector:
+        text:
+
+update_stages:
+  fields:
+    config:
+      required: true
+      selector:
+        text:
+          multiline: true

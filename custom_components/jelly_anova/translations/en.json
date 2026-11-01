@@ -302,6 +302,222 @@
       "fan_failed": {
         "name": "Fan failed"
       }
+    },
+    "button": {
+      "stop": {
+        "name": "Stop"
+      }
+    },
+    "number": {
+      "target_temperature": {
+        "name": "Target temperature"
+      },
+      "fan": {
+        "name": "Fan"
+      }
+    },
+    "switch": {
+      "door_light": {
+        "name": "Door light"
+      },
+      "door_light_preference": {
+        "name": "Door light preference"
+      }
+    },
+    "select": {
+      "display_unit": {
+        "name": "Display unit",
+        "state": {
+          "celsius": "Celsius",
+          "fahrenheit": "Fahrenheit"
+        }
+      }
+    }
+  },
+  "services": {
+    "start_cook": {
+      "name": "Start cook",
+      "description": "Starts a cook on the oven. If a cook is running, it is stopped first. Every cook has a maximum time and Home Assistant stops the oven at the end. Returns the new cook's id.",
+      "fields": {
+        "temperature_f": {
+          "name": "Temperature",
+          "description": "Oven temperature in Fahrenheit, up to 480."
+        },
+        "probe_f": {
+          "name": "Probe temperature",
+          "description": "Food probe target in Fahrenheit. Not tested on this oven yet, so it is refused for now."
+        },
+        "minutes": {
+          "name": "Minutes",
+          "description": "Cook timer in whole minutes. Leave empty for a cook with no timer (it ends at the maximum time)."
+        },
+        "elements": {
+          "name": "Heating elements",
+          "description": "Which elements are on: top, bottom, rear. At least one. The default is rear."
+        },
+        "steam_percent": {
+          "name": "Steam",
+          "description": "Steam as a percentage, 0 to 100. Leave empty for none. Not together with humidity."
+        },
+        "humidity": {
+          "name": "Humidity",
+          "description": "Relative humidity as a percentage, 0 to 100. Not together with steam."
+        },
+        "sous_vide": {
+          "name": "Sous vide",
+          "description": "Sous vide mode: 100% humidity, up to 212 F."
+        },
+        "timer_mode": {
+          "name": "Timer mode",
+          "description": "When the timer starts. Immediately, When Preheated and Manually work. When Food Detected and When Food Removed are not tested yet and are refused."
+        },
+        "fan": {
+          "name": "Fan",
+          "description": "Fan speed, 0 to 100."
+        },
+        "vent": {
+          "name": "Vent",
+          "description": "Exhaust vent: closed, open-mid or open-max."
+        },
+        "rack": {
+          "name": "Rack",
+          "description": "Rack position, 1 to 5."
+        },
+        "max_minutes": {
+          "name": "Maximum minutes",
+          "description": "The longest this cook may run before Home Assistant stops the oven. Default is 3 hours, or the timer plus a margin."
+        },
+        "temperature_c": {
+          "name": "Temperature (Celsius)",
+          "description": "The same as the Fahrenheit field, in Celsius. Kept so old values convert easily."
+        },
+        "probe_c": {
+          "name": "Probe temperature (Celsius)",
+          "description": "The same as the Fahrenheit field, in Celsius. Kept so old values convert easily."
+        },
+        "target_temperature_celsius": {
+          "name": "Target temperature (Celsius, old name)",
+          "description": "The old integration's name for the oven temperature in Celsius."
+        },
+        "target_temperature_fahrenheit": {
+          "name": "Target temperature (Fahrenheit, old name)",
+          "description": "The old integration's name for the oven temperature in Fahrenheit."
+        },
+        "temperature_probe_celsius": {
+          "name": "Probe temperature (Celsius, old name)",
+          "description": "The old integration's name for the probe target in Celsius."
+        },
+        "temperature_probe_fahrenheit": {
+          "name": "Probe temperature (Fahrenheit, old name)",
+          "description": "The old integration's name for the probe target in Fahrenheit."
+        },
+        "target_humidity": {
+          "name": "Target humidity (old name)",
+          "description": "The old integration's name for steam as a percentage. With sous vide on, it is the humidity."
+        },
+        "heating_top": {
+          "name": "Top element (old name)",
+          "description": "The old integration's switch for the top element."
+        },
+        "heating_bottom": {
+          "name": "Bottom element (old name)",
+          "description": "The old integration's switch for the bottom element."
+        },
+        "heating_rear": {
+          "name": "Rear element (old name)",
+          "description": "The old integration's switch for the rear element."
+        },
+        "timer": {
+          "name": "Timer (old name)",
+          "description": "The old integration's timer as a duration, in whole minutes. Zero means no timer."
+        }
+      }
+    },
+    "start_custom_cook": {
+      "name": "Start custom cook",
+      "description": "Starts a cook from stages written out in full, sent to the oven as written. Returns the new cook's id.",
+      "fields": {
+        "config": {
+          "name": "Stages",
+          "description": "The stages as JSON text: a list of stages in the oven's format."
+        },
+        "max_minutes": {
+          "name": "Maximum minutes",
+          "description": "The longest this cook may run before Home Assistant stops the oven. Default is 3 hours."
+        }
+      }
+    },
+    "stop_cook": {
+      "name": "Stop cook",
+      "description": "Stops the oven. With no cook id it is always sent. With a cook id it stops only that cook, so a safety stop in a script cannot end a later cook.",
+      "fields": {
+        "cook_id": {
+          "name": "Cook id",
+          "description": "The id that start_cook returned. Leave empty to stop whatever is running."
+        }
+      }
+    },
+    "update_cook": {
+      "name": "Update cook",
+      "description": "Changes the running cook's active stage. Only the fields you give are changed.",
+      "fields": {
+        "temperature_f": {
+          "name": "Temperature",
+          "description": "New oven temperature in Fahrenheit."
+        },
+        "temperature_c": {
+          "name": "Temperature (Celsius)",
+          "description": "The same as the Fahrenheit field, in Celsius. Kept so old values convert easily."
+        },
+        "steam_percent": {
+          "name": "Steam",
+          "description": "New steam percentage. For cooks started with steam."
+        },
+        "humidity": {
+          "name": "Humidity",
+          "description": "New relative humidity. For cooks started with humidity or sous vide."
+        },
+        "fan": {
+          "name": "Fan",
+          "description": "New fan speed, 0 to 100."
+        },
+        "vent": {
+          "name": "Vent",
+          "description": "New vent position: closed, open-mid or open-max."
+        },
+        "timer": {
+          "name": "Timer",
+          "description": "New timer length."
+        },
+        "elements": {
+          "name": "Heating elements",
+          "description": "Which elements are on: top, bottom, rear. At least one."
+        },
+        "start_timer": {
+          "name": "Start timer",
+          "description": "Release a timer that is waiting for a manual start."
+        }
+      }
+    },
+    "next_stage": {
+      "name": "Next stage",
+      "description": "Moves the running cook on to one of its stages.",
+      "fields": {
+        "stage_id": {
+          "name": "Stage id",
+          "description": "The id of the stage to start."
+        }
+      }
+    },
+    "update_stages": {
+      "name": "Update stages",
+      "description": "Replaces the running cook's stages with stages written out in full, sent as written.",
+      "fields": {
+        "config": {
+          "name": "Stages",
+          "description": "The stages as JSON text: a list of stages in the oven's format."
+        }
+      }
     }
   }
 }

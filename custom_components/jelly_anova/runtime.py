@@ -20,7 +20,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
@@ -45,6 +45,7 @@ from .cook import (
     limit_minutes,
     updated_stage,
 )
+from .errors import plain_errors
 from .state import CookInfo, OvenState, is_newer
 
 _LOGGER = logging.getLogger(__name__)
@@ -79,8 +80,8 @@ def _check_max_minutes(value: Any) -> None:
         raise CookError("The maximum cook time must be at least 1 minute.")
 
 
-def _custom_payload(stages: list[dict], cook_id: str, cooker_id: str) -> dict:
-    """The CMD_APO_START payload for raw stages, which are sent as written."""
+def _check_stages(stages: list[dict]) -> None:
+    """Raw stages are sent as written, but never above the oven's cap."""
     if not stages or not all(isinstance(stage, dict) for stage in stages):
         raise CookError("A custom cook needs at least one stage.")
     try:
@@ -92,6 +93,11 @@ def _custom_payload(stages: list[dict], cook_id: str, cooker_id: str) -> dict:
                     raise CookError(f"The oven cannot go above {MAX_F} F ({MAX_C:g} C).")
     except AttributeError:
         raise CookError("A custom cook's stages are not in the oven's format.") from None
+
+
+def _custom_payload(stages: list[dict], cook_id: str, cooker_id: str) -> dict:
+    """The CMD_APO_START payload for raw stages, which are sent as written."""
+    _check_stages(stages)
     return {
         "stages": stages,
         "cookId": cook_id,
@@ -528,6 +534,42 @@ class OvenRuntime:
             raise HomeAssistantError("The oven did not confirm the change.") from None
         if ("timer_seconds" in changes or changes.get("start_timer")) and state.cook.cook_id == self._cook_id:
             self._move_stop_time(state.cook, stage, bool(changes.get("start_timer")))
+
+    # --- direct commands -------------------------------------------------------
+    # Thin wrappers, so entities and actions hold no connection logic. Each raises a plain
+    # HomeAssistantError (ServiceValidationError for a value the oven would refuse).
+
+    async def _direct(self, command: str, payload: dict | None) -> None:
+        with plain_errors():
+            await self.connection.send(command, payload)
+
+    async def next_stage(self, stage_id: str) -> None:
+        """Jump to a stage of the running cook."""
+        await self._direct("CMD_APO_START_STAGE", {"stageId": stage_id})
+
+    async def update_stages(self, stages: list[dict]) -> None:
+        """Replace the stages of the running cook, as written (the temperature cap applies)."""
+        with plain_errors():
+            _check_stages(stages)
+        await self._direct("CMD_APO_UPDATE_COOK_STAGES", {"stages": stages})
+
+    async def set_door_light(self, on: bool) -> None:
+        await self._direct("CMD_APO_SET_LAMP", {"on": bool(on)})
+
+    async def set_door_light_preference(self, on: bool) -> None:
+        await self._direct("CMD_APO_SET_LAMP_PREFERENCE", {"on": bool(on)})
+
+    async def set_fan(self, speed: float) -> None:
+        if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not 0 <= speed <= 100:
+            raise ServiceValidationError("Fan speed must be 0 to 100.")
+        await self._direct("CMD_APO_SET_FAN", {"speed": int(speed)})
+
+    async def set_display_unit(self, unit: str) -> None:
+        """The oven's display unit, "C" or "F". UNPROVEN: listed in Anova's docs, not yet tried on
+        this oven (Task 11 tries it)."""
+        if unit not in ("C", "F"):
+            raise ServiceValidationError("The display unit can only be C or F.")
+        await self._direct("CMD_APO_SET_TEMPERATURE_UNIT", {"temperatureUnit": unit})
 
     def _move_stop_time(self, cook: CookInfo, stage: dict, releasing: bool) -> None:
         """Our cook's timer changed, so its stop time follows, as if the cook had started so.

@@ -155,7 +155,7 @@ def _validate(req: CookRequest):
         raise CookError("A probe target is not tested on this oven yet, so it is not offered.")
     if req.minutes is not None:
         m = req.minutes
-        if isinstance(m, bool) or not isinstance(m, (int, float)) or m != m or m < 1 or m != int(m):
+        if isinstance(m, bool) or not isinstance(m, (int, float)) or m != m or m in (float("inf"), float("-inf")) or m < 1 or m != int(m):
             raise CookError("The timer must be a whole number of minutes, at least 1.")
     if req.minutes is None and req.timer_mode != "Immediately":
         _timer_entry(req.timer_mode, "dry", celsius)  # raises for unknown or food modes

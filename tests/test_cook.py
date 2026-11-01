@@ -284,7 +284,7 @@ def test_updated_stage_steam_percent_refused_on_wet_bulb():
         updated_stage(first_stage(temperature_c=60, humidity=40), {"steam_percent": 20})
 
 
-@pytest.mark.parametrize("minutes", [1.5, 0.5, True, "5", float("nan")])
+@pytest.mark.parametrize("minutes", [1.5, 0.5, True, "5", float("nan"), float("inf")])
 def test_minutes_must_be_whole(minutes):
     with pytest.raises(CookError):
         build(temperature_c=60, minutes=minutes)

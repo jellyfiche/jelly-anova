@@ -1,0 +1,62 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Anova Precision Oven",
+        "description": "How do you sign in to the Anova app?",
+        "menu_options": {
+          "login": "Email and password",
+          "paste": "Advanced: paste a login key (Google, Apple or Facebook sign-in)"
+        }
+      },
+      "login": {
+        "title": "Sign in to Anova",
+        "description": "Your password is used once to get a login key and is never saved.",
+        "data": {
+          "email": "Anova email",
+          "password": "Anova password",
+          "api_key": "Anova web key (only if asked)"
+        },
+        "data_description": {
+          "api_key": "Jelly Anova reads this public key from Anova's website. It could not be found this time, so paste it here if you have it."
+        }
+      },
+      "paste": {
+        "title": "Paste a login key",
+        "description": "For accounts that sign in with Google, Apple or Facebook. Paste the refresh token from your Anova web session.",
+        "data": {
+          "refresh_token": "Login key (refresh token)",
+          "api_key": "Anova web key (only if asked)"
+        },
+        "data_description": {
+          "api_key": "Jelly Anova reads this public key from Anova's website. It could not be found this time, so paste it here if you have it."
+        }
+      },
+      "personal": {
+        "title": "Personal token (optional)",
+        "description": "Optional. The personal token from the Anova app is the backup for Stop: it is used to stop the oven if the normal login stops working. You can leave this empty.",
+        "data": {
+          "personal_token": "Personal token"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sign in to Anova again",
+        "description": "Anova no longer accepts the saved login. Enter your email and password again. The password is not saved.",
+        "data": {
+          "email": "Anova email",
+          "password": "Anova password",
+          "api_key": "Anova web key (only if asked)"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Wrong email or password, or the login key is not valid.",
+      "cannot_connect": "Could not reach Anova. Try again in a minute.",
+      "no_api_key": "The Anova web key could not be found. Paste it into the key box."
+    },
+    "abort": {
+      "single_instance_allowed": "Jelly Anova is already set up.",
+      "reauth_successful": "Signed in again."
+    }
+  }
+}

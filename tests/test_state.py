@@ -325,3 +325,18 @@ def test_fault_details_missing_stay_none():
     assert s.failed == {}
     assert s.lamp_failed is None
     assert s.boiler_pump_faults is None
+
+
+def test_timer_waiting_only_when_node_is_idle_with_initial():
+    """Real node shapes: waiting {idle, initial}; ended {idle}; running has initial and a start."""
+    for node, waiting in (
+        ({"mode": "idle", "initial": 60}, True),
+        ({"mode": "idle"}, False),
+        ({"mode": "running", "initial": 60, "startedAtTimestamp": "2026-11-01T16:42:52Z"}, False),
+    ):
+        payload = load("login_cook.json")
+        payload["state"]["nodes"]["timer"] = node
+        cook = parse_state(payload, None).cook
+        assert cook.timer_waiting is waiting, node
+        assert cook.timer_initial == 60  # always the stage's own setting
+    assert parse_state(load("idle.json"), None).cook is None

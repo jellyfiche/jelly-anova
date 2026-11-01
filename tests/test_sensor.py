@@ -388,14 +388,30 @@ async def _cook_with_timer(hass, entry, mode, started, initial=3600, run_s=0, co
     await push(hass, entry, payload)
 
 
+async def _timer_node(hass, entry, node):
+    """The login_cook report with the timer node exactly as the oven sent it."""
+    payload = fresh(load("login_cook.json"))
+    payload["state"]["nodes"]["timer"] = node
+    await push(hass, entry, payload)
+
+
 async def test_finished_timer_is_not_shown_as_live(hass, entry):
-    # idle after it ran: it ended, so unknown
-    await _cook_with_timer(hass, entry, "idle", True, run_s=7200)
+    # Real shape after a timer ended (captures/battery-timer_end): the node is just idle,
+    # while the stage still holds do.timer.initial.
+    await _timer_node(hass, entry, {"mode": "idle"})
     assert state_of(hass, "sensor", "timer").state == STATE_UNKNOWN
-    # idle before it ran (waiting for a manual start): the full time
-    await _cook_with_timer(hass, entry, "idle", False)
-    assert state_of(hass, "sensor", "timer").state == "3600"
-    await _cook_with_timer(hass, entry, "completed", True, run_s=7200)
+    assert state_of(hass, "sensor", "timer_mode").state == "idle"
+    assert state_of(hass, "sensor", "timer_initial").state == "60"  # the stage's own setting
+
+
+async def test_waiting_timer_shows_its_full_time(hass, entry):
+    # Real shape of a timer waiting for a manual start (captures/battery-timer_manual).
+    await _timer_node(hass, entry, {"mode": "idle", "initial": 60})
+    assert state_of(hass, "sensor", "timer").state == "60"
+
+
+async def test_completed_timer_is_zero(hass, entry):
+    await _timer_node(hass, entry, {"mode": "completed"})
     assert state_of(hass, "sensor", "timer").state == "0"
 
 

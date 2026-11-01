@@ -40,6 +40,9 @@ class CookInfo:
     rack: int | None
     in_end_stage: bool
     timer_started: datetime | None = None
+    # The timer node is idle and carries `initial`: set, waiting to be started. An ended timer's
+    # node is just {mode: idle}, while the stage still holds do.timer.initial.
+    timer_waiting: bool = False
 
 
 @dataclass(frozen=True)
@@ -221,6 +224,9 @@ def _cook(raw: Any, nodes: dict) -> CookInfo | None:
         rack=rack if isinstance(rack, int) and not isinstance(rack, bool) else None,
         in_end_stage=active.get("title") == END_STAGE_TITLE if active else False,
         timer_started=_time(_get(nodes, "timer", "startedAtTimestamp")) if has_timer else None,
+        timer_waiting=has_timer
+        and _get(nodes, "timer", "mode") == "idle"
+        and _num(_get(nodes, "timer", "initial")) is not None,
     )
 
 

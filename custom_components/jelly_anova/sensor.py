@@ -69,8 +69,8 @@ def _cook_time(state: OvenState) -> int | None:
 
 def _timer(state: OvenState) -> int | None:
     """Time left as of the report, in whole minutes (seconds). Counted down while running,
-    0 when completed, the full time while waiting. Idle with a start time means it ran and
-    ended: unknown. None while the hidden end stage runs (its timer is not the user's)."""
+    0 when completed, the full time while waiting (idle node with `initial`). Any other idle
+    means it ran and ended: unknown. None while the hidden end stage runs (its timer is not the user's)."""
     cook = state.cook
     if cook is None or cook.in_end_stage or cook.timer_initial is None or cook.timer_mode is None:
         return None
@@ -82,7 +82,7 @@ def _timer(state: OvenState) -> int | None:
     if cook.timer_mode == "completed":
         return 0
     if cook.timer_mode == "idle":
-        return None if cook.timer_started is not None else cook.timer_initial
+        return cook.timer_initial if cook.timer_waiting else None
     return cook.timer_initial
 
 

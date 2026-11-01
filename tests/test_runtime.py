@@ -4,6 +4,7 @@ import asyncio
 from datetime import timedelta
 
 import pytest
+from freezegun import freeze_time
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
@@ -343,6 +344,39 @@ async def test_second_start_cannot_lose_the_first_cooks_stop_time(rig, monkeypat
     assert rig.saved["stop_at"] is not None
 
 
+async def test_start_start_then_first_cook_shows_and_a_stop_reaches_it(rig, monkeypatch):
+    """The whole of the mistake: the second start must not leave the first cook with no limit."""
+    monkeypatch.setattr(runtime_module, "IDLE_WAIT", 0.05)
+    rt, first = await started(rig, CookRequest(temperature_f=350, max_minutes=1))
+    rt.on_state(report("idle"))
+    with pytest.raises(HomeAssistantError):
+        await rt.start(CookRequest(temperature_f=300, max_minutes=1))
+    rig.conn.sent.clear()
+    with freeze_time(dt_util.utcnow() + timedelta(seconds=61)):
+        rt.on_state(report("cook", first))
+        async_fire_time_changed(rig.hass)
+        await rig.settle()
+    assert rig.conn.order == [STOP]
+    assert rig.saved["cook_id"] == first
+
+
+async def test_second_start_clears_the_problem_report_of_the_cook_it_ended(rig):
+    rt, first = await started(rig)
+    ir.async_create_issue(
+        rig.hass, DOMAIN, "stop_failed", is_fixable=False,
+        severity=ir.IssueSeverity.CRITICAL, translation_key="stop_failed",
+    )
+
+    def goes_idle(command):
+        if command == STOP:
+            later = dt_util.utcnow() + timedelta(seconds=1)
+            rig.hass.loop.call_soon(rt.on_state, report("idle", at=later))
+
+    rig.conn.on_send = goes_idle
+    await rt.start(CookRequest(temperature_f=300))
+    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, "stop_failed") is None
+
+
 async def test_second_start_stops_the_first_and_keeps_only_the_second(rig):
     rt, first = await started(rig)
 
@@ -464,6 +498,8 @@ async def test_reports_returning_after_bounded_stops_send_it_again(rig, freezer)
     rt.on_state(report("cook", cook_id))
     await rig.advance(freezer, 61)
     assert rig.conn.count(STOP) == 4
+    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, "stop_failed") is not None
+    freezer.tick(timedelta(seconds=1))
     rt.on_state(report("idle"))
     await rig.settle()
     assert rig.saved["stop_at"] is None
@@ -530,11 +566,12 @@ async def test_limit_stop_undelivered_keeps_trying_and_raises_a_problem(rig, fre
     assert ir.async_get(rig.hass).async_get_issue(DOMAIN, "stop_failed") is not None
     rig.backup_error = None
     await rig.advance(freezer, 61)
-    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, "stop_failed") is None
+    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, "stop_failed") is not None
     assert rig.saved["stop_at"] is not None  # answered, not yet seen
     freezer.tick(timedelta(seconds=1))
     rt.on_state(report("idle"))
     await rig.settle()
+    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, "stop_failed") is None
     assert rig.saved["stop_at"] is None
 
 
@@ -1329,6 +1366,20 @@ async def test_app_cook_timer_change_touches_no_stop_time(rig, freezer):
     stop_at = rig.saved["stop_at"]
     rt.on_state(report("cook", OTHER, stages=TIMED, timer="running", timer_started=dt_util.utcnow()))
     await rt.update({"timer_seconds": 7200})
+    await rig.settle()
+    assert rig.saved["stop_at"] == stop_at
+
+
+@pytest.mark.parametrize("maximum, minutes", [(None, 180), (45, 45)])
+async def test_custom_cook_limit_stands_after_a_timer_change(rig, freezer, maximum, minutes):
+    rt = await rig.boot()
+    rt.on_state(report("idle"))
+    cook_id = await rt.start_custom(ONE_STAGE, maximum)
+    await rig.settle()
+    stop_at = rig.saved["stop_at"]
+    assert rig.saved["max_minutes"] == minutes
+    rt.on_state(report("cook", cook_id, stages=ONE_STAGE, timer="running", timer_started=dt_util.utcnow()))
+    await rt.update({"timer_seconds": 36000})
     await rig.settle()
     assert rig.saved["stop_at"] == stop_at
 

@@ -453,8 +453,7 @@ class OvenRuntime:
             _LOGGER.warning("The oven could not be told to stop, trying again: %s", type(err).__name__)
             self._raise_stop_issue()
             return
-        ir.async_delete_issue(self._hass, DOMAIN, ISSUE_STOP)
-        self._stop_rounds += 1  # the limit stays until a report shows the cook gone
+        self._stop_rounds += 1  # the limit and any problem report stay until the cook is seen gone
 
     def _note_stop(self, cook_id: str | None) -> None:
         """Called before a stop goes out, so a cook started meanwhile is not mistaken for this one."""
@@ -511,7 +510,7 @@ class OvenRuntime:
         cook_id = f"ios-{uuid.uuid4()}"
         payload = _custom_payload(stages, cook_id, self._cooker())
         limit = int(max_minutes or DEFAULT_MAX_MINUTES)
-        return await self._start(payload, cook_id, limit, max_minutes)
+        return await self._start(payload, cook_id, limit, limit)  # its limit stands, as given or not
 
     async def update(self, changes: dict) -> None:
         """Change the active stage of the running cook."""
@@ -577,6 +576,8 @@ class OvenRuntime:
             await self._make_idle()
             if presses != self._stop_presses:
                 raise HomeAssistantError("Stop was pressed, so the new cook was not started.")
+            if self._cook_id is not None:
+                self._forget_cook()  # _make_idle has just seen it gone
             # Saved before it is sent: reports can beat the reply, and a failed send may have
             # arrived. A cook must not be able to run without its limit.
             self._cook_id = cook_id
@@ -611,6 +612,8 @@ class OvenRuntime:
         it would lose the only stop time it has.
         """
         if self._cook_id is None:
+            # A report from before the last start proves nothing. Reports only count for 60 s,
+            # so once that start is over 60 s old any fresh idle report is after it.
             since = self._last_start
             state = await self._wait_for(
                 lambda report: self._fresh(report) and (since is None or is_newer(report, since)),

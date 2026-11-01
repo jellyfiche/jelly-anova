@@ -55,7 +55,7 @@ class TargetTemperature(JellyAnovaEntity, NumberEntity):
         state = self.oven_state
         if state is None or state.target_c is None or not self._running_stage():
             return None
-        return round(state.target_c * 9 / 5 + 32, 1)
+        return round(state.target_c * 9 / 5 + 32)  # whole degrees, as the step is
 
     async def async_set_native_value(self, value: float) -> None:
         with plain_errors():

@@ -14,7 +14,9 @@ from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 
 from custom_components.jelly_anova import services as services_module
 from custom_components.jelly_anova.connection import OvenNoReply, OvenOffline, OvenRefused
-from custom_components.jelly_anova.const import DOMAIN
+from custom_components.jelly_anova.const import DOMAIN, END_STAGE_TITLE
+from custom_components.jelly_anova.cook import END_STAGE_CELSIUS, END_STAGE_SECONDS, PREHEAT_ALLOWANCE_MINUTES, TIMER_MARGIN_MINUTES
+from homeassistant.util import dt as dt_util
 
 from .test_runtime import NO_TIMER, ONE_STAGE, report
 from .test_setup import fake, setup  # noqa: F401 - fake is a fixture
@@ -307,17 +309,121 @@ async def test_update_cook_when_idle_is_plain(oven):
         await oven.call("update_cook", {"fan": 50})
 
 
+async def started(oven, **fields):
+    """Start a timed cook through the action and feed the report that shows it running."""
+    await oven.call("start_cook", {"temperature_f": 350, "minutes": 30, **fields})
+    payload = oven.payload("CMD_APO_START")
+    oven.feed(report("cook", cook_id=payload["cookId"], stages=payload["stages"]))
+    oven.sent.clear()
+    return payload
+
+
 async def test_next_stage(oven):
-    await oven.call("next_stage", {"stage_id": "ios-stage-2"})
-    assert oven.sent == [("CMD_APO_START_STAGE", {"stageId": "ios-stage-2"})]
+    running(oven)
+    stage_id = NO_TIMER[0]["id"]
+    await oven.call("next_stage", {"stage_id": stage_id})
+    assert oven.sent == [("CMD_APO_START_STAGE", {"stageId": stage_id})]
+
+
+async def test_next_stage_unknown_id_refused(oven):
+    running(oven)
+    with pytest.raises(ServiceValidationError, match="not a stage"):
+        await oven.call("next_stage", {"stage_id": "ios-nope"})
+    assert oven.sent == []
+
+
+async def test_next_stage_never_the_hidden_end_stage(oven):
+    payload = await started(oven)
+    end_id = payload["stages"][1]["id"]
+    with pytest.raises(ServiceValidationError, match="not a stage"):
+        await oven.call("next_stage", {"stage_id": end_id})
+    assert oven.sent == []
+
+
+async def test_next_stage_refused_without_a_running_cook(oven):
+    with pytest.raises(HomeAssistantError, match="No cook is running"):
+        await oven.call("next_stage", {"stage_id": "x"})
+    assert oven.sent == []
+
+
+async def test_next_stage_keeps_the_stop_bookkeeping(oven):
+    payload = await started(oven)
+    runtime = oven.runtime
+    before = (runtime._cook_id, runtime._stop_at, runtime._max_minutes)
+    await oven.call("next_stage", {"stage_id": payload["stages"][0]["id"]})
+    assert (runtime._cook_id, runtime._stop_at, runtime._max_minutes) == before
+
+
+def timed_stage(seconds, title=""):
+    stage = json.loads(json.dumps(ONE_STAGE[0]))
+    stage["id"] = f"ios-new-{seconds}"
+    stage["title"] = title
+    stage["do"]["timer"] = {"initial": seconds}
+    stage.pop("exit", None)
+    return stage
 
 
 async def test_update_stages(oven):
+    running(oven)
     await oven.call("update_stages", {"config": json.dumps(ONE_STAGE)})
     assert oven.sent == [("CMD_APO_UPDATE_COOK_STAGES", {"stages": ONE_STAGE})]
 
 
+async def test_update_stages_keeps_the_end_stage_on_our_cook(oven):
+    payload = await started(oven)
+    old_end = payload["stages"][1]
+    new = [timed_stage(600), timed_stage(300), old_end]  # an end stage in the input is replaced
+    await oven.call("update_stages", {"config": json.dumps(new)})
+    sent = oven.payload("CMD_APO_UPDATE_COOK_STAGES")["stages"]
+    assert [stage["title"] for stage in sent] == ["", "", END_STAGE_TITLE]
+    assert sent[2]["id"] != old_end["id"]
+    assert sent[2]["do"]["timer"]["initial"] == END_STAGE_SECONDS
+    assert sent[2]["do"]["temperatureBulbs"]["dry"]["setpoint"]["celsius"] == END_STAGE_CELSIUS
+    for stage in sent[:2]:
+        assert stage["exit"] == {"conditions": {"and": {"nodes.timer.mode": {"=": "completed"}}}}
+
+
+async def test_update_stages_moves_the_stop_time(oven):
+    await started(oven)
+    runtime = oven.runtime
+    await oven.call("update_stages", {"config": json.dumps([timed_stage(600), timed_stage(300)])})
+    wait = (runtime._stop_at - dt_util.utcnow()).total_seconds()
+    assert wait == pytest.approx(900 + (TIMER_MARGIN_MINUTES + PREHEAT_ALLOWANCE_MINUTES) * 60, abs=5)
+    assert runtime._cook_id is not None
+
+
+async def test_update_stages_leaves_a_own_maximum_standing(oven):
+    await started(oven, max_minutes=45)
+    runtime = oven.runtime
+    before = runtime._stop_at
+    await oven.call("update_stages", {"config": json.dumps([timed_stage(600)])})
+    assert runtime._stop_at == before and runtime._max_minutes == 45
+
+
+async def test_update_stages_on_an_app_cook_is_sent_as_written(oven):
+    running(oven)  # a cook Home Assistant did not start
+    stages = [timed_stage(600)]
+    await oven.call("update_stages", {"config": json.dumps(stages)})
+    assert oven.payload("CMD_APO_UPDATE_COOK_STAGES") == {"stages": stages}
+    assert oven.runtime._stop_at is None
+
+
+async def test_update_stages_refused_without_a_running_cook(oven):
+    with pytest.raises(HomeAssistantError, match="No cook is running"):
+        await oven.call("update_stages", {"config": json.dumps(ONE_STAGE)})
+    assert oven.sent == []
+
+
+async def test_update_stages_refused_in_the_end_stage(oven):
+    payload = await started(oven)
+    oven.feed(report("cook", cook_id=payload["cookId"], stages=payload["stages"], index=1))
+    with pytest.raises(HomeAssistantError, match="finished"):
+        await oven.call("update_stages", {"config": json.dumps([timed_stage(600)])})
+    assert oven.commands("CMD_APO_UPDATE_COOK_STAGES") == []  # the cook's own stop may go out
+
+
 async def test_update_stages_over_cap_refused(oven):
+    running(oven)
     hot = json.loads(json.dumps(ONE_STAGE))
     hot[0]["do"]["temperatureBulbs"]["dry"]["setpoint"]["celsius"] = 300
     with pytest.raises(ServiceValidationError, match="480 F"):
@@ -334,9 +440,10 @@ async def test_update_stages_over_cap_refused(oven):
     ],
 )
 async def test_oven_errors_become_plain_home_assistant_errors(oven, error, words):
+    running(oven)
     oven.errors.append(error)
     with pytest.raises(HomeAssistantError) as err:
-        await oven.call("next_stage", {"stage_id": "s"})
+        await oven.call("next_stage", {"stage_id": NO_TIMER[0]["id"]})
     assert not isinstance(err.value, ServiceValidationError)
     assert words in str(err.value)
     assert "secret" not in str(err.value) and "token" not in str(err.value)
@@ -389,7 +496,7 @@ async def test_number_sends_update(oven):
     running(oven)
     entity_id = oven.entity("number", "target_temperature")
     await oven.hass.async_block_till_done()
-    assert float(oven.hass.states.get(entity_id).state) == pytest.approx(350, abs=0.1)
+    assert oven.hass.states.get(entity_id).state == "350"  # whole degrees, as the step says
     await oven.hass.services.async_call("number", "set_value", {"entity_id": entity_id, "value": 400}, blocking=True)
     stage = oven.payload("CMD_APO_UPDATE_COOK_STAGE")
     assert stage["do"]["temperatureBulbs"]["dry"]["setpoint"]["celsius"] == 204.44
@@ -446,13 +553,20 @@ async def test_door_light_preference_switch(oven):
     assert oven.sent == [("CMD_APO_SET_LAMP_PREFERENCE", {"on": False})]
 
 
-async def test_display_unit_select(oven):
+async def test_display_unit_select(hass, fake, monkeypatch):
+    from custom_components.jelly_anova import select as select_module
+
+    on = dataclasses.replace(select_module.DISPLAY_UNIT, entity_registry_enabled_default=True)
+    monkeypatch.setattr(select_module, "DISPLAY_UNIT", on)
+    entry = await setup(hass)
+    oven = Oven(hass, entry, fake.made[0])
+    oven.feed(report("idle"))
     entity_id = oven.entity("select", "display_unit")
-    await oven.hass.services.async_call(
+    await hass.services.async_call(
         "select", "select_option", {"entity_id": entity_id, "option": "fahrenheit"}, blocking=True
     )
     assert oven.sent == [("CMD_APO_SET_TEMPERATURE_UNIT", {"temperatureUnit": "F"})]
-    await oven.hass.services.async_call(
+    await hass.services.async_call(
         "select", "select_option", {"entity_id": entity_id, "option": "celsius"}, blocking=True
     )
     assert oven.sent[-1] == ("CMD_APO_SET_TEMPERATURE_UNIT", {"temperatureUnit": "C"})
@@ -504,3 +618,17 @@ def test_control_names_spelled():
             for word in value["name"].lower().split():
                 assert word in words, f"{domain} {key}: {word!r}"
     assert controls["select"]["display_unit"]["state"] == {"celsius": "Celsius", "fahrenheit": "Fahrenheit"}
+
+
+def test_target_humidity_documented_as_the_old_steam_field():
+    import yaml
+
+    strings = json.loads((PACKAGE / "strings.json").read_text())["services"]["start_cook"]["fields"]
+    assert "steam percent unless sous vide" in strings["target_humidity"]["description"]
+    assert "steam percent unless sous vide" in (PACKAGE / "services.yaml").read_text()
+    assert yaml.safe_load((PACKAGE / "services.yaml").read_text())  # still valid
+
+
+async def test_display_unit_select_is_off_until_tested(oven):
+    entry = er.async_get(oven.hass).async_get(oven.entity("select", "display_unit"))
+    assert entry.disabled_by is er.RegistryEntryDisabler.INTEGRATION

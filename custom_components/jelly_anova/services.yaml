@@ -172,6 +172,7 @@ start_cook:
           unit_of_measurement: "°F"
           mode: box
     target_humidity:
+      # Old andr83 field: steam percent unless sous vide, then humidity.
       required: false
       advanced: true
       selector:

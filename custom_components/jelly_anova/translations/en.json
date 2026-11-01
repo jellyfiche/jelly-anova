@@ -413,7 +413,7 @@
         },
         "target_humidity": {
           "name": "Target humidity (old name)",
-          "description": "The old integration's name for steam as a percentage. With sous vide on, it is the humidity."
+          "description": "The old integration's field, meaning steam percent unless sous vide is on, and then humidity."
         },
         "heating_top": {
           "name": "Top element (old name)",

@@ -140,6 +140,34 @@ def _stage(celsius, seconds, bulb, steam, fan, vent, rack, elements, entry=None,
     return stage
 
 
+def end_stage(rack: int) -> dict:
+    """The hidden last stage: 25 C, rear element, no steam, 12-hour timer."""
+    end = _stage(
+        END_STAGE_CELSIUS, END_STAGE_SECONDS, "dry",
+        {"mode": "steam-percentage", "steamPercentage": {"setpoint": 0}},
+        100, "closed", rack, {"top": {"on": False}, "bottom": {"on": False}, "rear": {"on": True}},
+    )
+    end["title"] = END_STAGE_TITLE
+    return end
+
+
+def with_end_stage(stages: list[dict]) -> list[dict]:
+    """Raw stages for a cook Home Assistant started, ending in a fresh hidden end stage.
+
+    Any end stage in the input is dropped. Each stage with a timer gets the exit the oven needs
+    to move on when the timer completes (kept if it has one). Stages with no timer anywhere get no
+    end stage, as an untimed cook has none (its maximum time stops it).
+    """
+    kept = [copy.deepcopy(stage) for stage in stages if stage.get("title") != END_STAGE_TITLE]
+    if not any(isinstance(stage.get("do"), dict) and "timer" in stage["do"] for stage in kept):
+        return kept
+    for stage in kept:
+        if isinstance(stage.get("do"), dict) and "timer" in stage["do"] and "exit" not in stage:
+            stage["exit"] = {"conditions": {"and": {"nodes.timer.mode": {"=": "completed"}}}}
+    rack = kept[0].get("rackPosition", 3)
+    return [*kept, end_stage(rack if isinstance(rack, int) else 3)]
+
+
 def _check_temperature(c, f, sous_vide: bool) -> float:
     """One oven temperature in Celsius: units, cap and sous vide limit, shared by start and update."""
     celsius = _celsius(c, f, "oven temperature")
@@ -208,13 +236,7 @@ def build_start(req: CookRequest, cooker_id: str) -> tuple[dict, str]:
     if seconds is not None:
         # Cooks do not end by themselves (design.md, "Ending cooks safely"): a hidden last stage
         # at 25 C keeps the elements at 0 W if Home Assistant is down when the timer ends.
-        end = _stage(
-            END_STAGE_CELSIUS, END_STAGE_SECONDS, "dry",
-            {"mode": "steam-percentage", "steamPercentage": {"setpoint": 0}},
-            100, "closed", req.rack, {"top": {"on": False}, "bottom": {"on": False}, "rear": {"on": True}},
-        )
-        end["title"] = END_STAGE_TITLE
-        stages.append(end)
+        stages.append(end_stage(req.rack))
     cook_id = f"ios-{uuid.uuid4()}"
     payload = {
         "stages": stages, "cookId": cook_id, "cookerId": cooker_id, "cookableId": "", "title": "",

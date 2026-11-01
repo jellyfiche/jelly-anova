@@ -15,6 +15,7 @@ DISPLAY_UNIT = SelectEntityDescription(
     key="display_unit",
     translation_key="display_unit",
     entity_category=EntityCategory.CONFIG,
+    entity_registry_enabled_default=False,  # unproven: enable it once Task 11 has tried the command
     options=["celsius", "fahrenheit"],
 )
 UNITS = {"celsius": "C", "fahrenheit": "F"}

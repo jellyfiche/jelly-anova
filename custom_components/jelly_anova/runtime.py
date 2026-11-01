@@ -30,6 +30,7 @@ from .connection import OvenConnection, OvenError, OvenRefused, backup_stop
 from .const import (
     DEFAULT_MAX_MINUTES,
     DOMAIN,
+    END_STAGE_TITLE,
     EVENT_COOK_FINISHED,
     EVENT_TARGET_REACHED,
     MAX_C,
@@ -44,6 +45,7 @@ from .cook import (
     build_start,
     limit_minutes,
     updated_stage,
+    with_end_stage,
 )
 from .errors import plain_errors
 from .state import CookInfo, OvenState, is_newer
@@ -543,15 +545,55 @@ class OvenRuntime:
         with plain_errors():
             await self.connection.send(command, payload)
 
+    def _running_cook(self) -> CookInfo:
+        """The cook a fresh report shows, or a plain error. Not the hidden end stage."""
+        state = self.state
+        if not self._fresh(state) or state.mode == "idle" or state.cook is None:
+            raise HomeAssistantError("No cook is running to change.")
+        if state.cook.in_end_stage:
+            raise HomeAssistantError("This cook has finished, so it can no longer be changed.")
+        return state.cook
+
     async def next_stage(self, stage_id: str) -> None:
-        """Jump to a stage of the running cook."""
+        """Jump to a stage of the running cook (never the hidden end stage)."""
+        cook = self._running_cook()
+        if stage_id not in [stage.get("id") for stage in cook.stages]:
+            raise ServiceValidationError("That is not a stage of the running cook.")
         await self._direct("CMD_APO_START_STAGE", {"stageId": stage_id})
 
     async def update_stages(self, stages: list[dict]) -> None:
-        """Replace the stages of the running cook, as written (the temperature cap applies)."""
+        """Replace the stages of the running cook (the temperature cap applies).
+
+        A cook Home Assistant started keeps a fresh hidden end stage and its stop time follows the
+        new timers, so it still ends. A cook from the app or panel is sent as written.
+        """
         with plain_errors():
             _check_stages(stages)
-        await self._direct("CMD_APO_UPDATE_COOK_STAGES", {"stages": stages})
+        cook = self._running_cook()
+        ours = self._cook_id is not None and cook.cook_id == self._cook_id
+        sent = with_end_stage(stages) if ours else stages
+        await self._direct("CMD_APO_UPDATE_COOK_STAGES", {"stages": sent})
+        if ours:
+            self._move_stop_time_for_stages(sent)
+
+    def _move_stop_time_for_stages(self, stages: list[dict]) -> None:
+        """New stages for our cook: the stop time covers all their timers, with the usual margins.
+
+        Not moved: a cook's own maximum, stages with no timer (the default limit never extends),
+        and a stop already due.
+        """
+        now = dt_util.utcnow()
+        seconds = sum(
+            stage["do"]["timer"].get("initial", 0)
+            for stage in stages
+            if stage.get("title") != END_STAGE_TITLE
+            and isinstance(_dig(stage, "do", "timer", "initial"), (int, float))
+        )
+        if self._max_minutes is not None or not seconds or self._stop_at is None or self._stop_at <= now:
+            return
+        margin = TIMER_MARGIN_MINUTES + PREHEAT_ALLOWANCE_MINUTES
+        self._stop_at = now + timedelta(seconds=seconds, minutes=margin)
+        self._save()
 
     async def set_door_light(self, on: bool) -> None:
         await self._direct("CMD_APO_SET_LAMP", {"on": bool(on)})

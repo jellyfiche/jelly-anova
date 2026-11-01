@@ -53,9 +53,9 @@ async def async_get_config_entry_diagnostics(
     """Return the diagnostics for the oven."""
     runtime: OvenRuntime = entry.runtime_data
     state = runtime.state
-    saved = runtime._data()  # noqa: SLF001 - what the store holds, for the report
+    saved = runtime.saved_snapshot()
     oven = {
-        "connected": runtime._connected,  # noqa: SLF001
+        "connected": runtime.connected,
         "available": runtime.available,
         "mode": state.mode if state else None,
         "firmware": state.firmware if state else None,
@@ -67,10 +67,11 @@ async def async_get_config_entry_diagnostics(
         "total_cook_hours": runtime.total_cook_hours,
     }
     return {
-        "entry": async_redact_data(
-            {"title": entry.title, "data": dict(entry.data), "options": dict(entry.options)},
-            TO_REDACT,
-        ),
+        # Key names only: redaction by name cannot catch a secret under a name nobody listed.
+        "entry": {
+            "data_keys": sorted(entry.data),
+            "option_keys": sorted(entry.options),
+        },
         "oven": async_redact_data(oven, TO_REDACT),
         "store": async_redact_data(saved, TO_REDACT),
     }

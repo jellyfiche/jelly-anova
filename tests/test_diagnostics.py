@@ -16,6 +16,10 @@ SECRETS = {
     "email": "SENTINEL-email",
     "password": "SENTINEL-password",  # leak-check: allow
     "uid": "SENTINEL-uid",
+    "wifi_name": "SENTINEL-wifi",
+    "processed_command_ids": ["SENTINEL-cmd1", "SENTINEL-cmd2"],
+    "cookable_id": "SENTINEL-cookable",
+    "unlisted_key": ["SENTINEL-id1", "SENTINEL-id2"],
 }
 COOKER = "SENTINEL-cooker"
 
@@ -45,7 +49,10 @@ async def test_diagnostics_redacts(hass, fake, hass_storage):  # noqa: F811
     out = await async_get_config_entry_diagnostics(hass, entry)
     text = json.dumps(out, default=str)
     for value in [*SECRETS.values(), COOKER, "SENTINEL-cookid"]:
-        assert value not in text, value
+        for part in value if isinstance(value, list) else [value]:
+            assert part not in text, part
+    assert out["entry"]["data_keys"] == sorted(SECRETS)
+    assert "data" not in out["entry"] and "options" not in out["entry"]
     # Every path that holds a secret-named key is redacted, wherever it sits.
     for path, value in walk(out):
         assert "SENTINEL" not in value, path

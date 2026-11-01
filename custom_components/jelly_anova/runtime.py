@@ -171,6 +171,14 @@ class OvenRuntime:
         return self._connected and self._fresh(self.state)
 
     @property
+    def connected(self) -> bool:
+        return self._connected
+
+    def saved_snapshot(self) -> dict:
+        """What the store holds (for diagnostics, which redacts it)."""
+        return self._data()
+
+    @property
     def total_cook_hours(self) -> float:
         return self._total_hours
 

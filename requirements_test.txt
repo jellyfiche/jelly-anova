@@ -1,0 +1,3 @@
+# Python 3.14 is required by this release.
+# 0.13.375 pins homeassistant==2026.10.4, the version tested.
+pytest-homeassistant-custom-component==0.13.375

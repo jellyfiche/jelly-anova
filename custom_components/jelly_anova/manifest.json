@@ -1,0 +1,12 @@
+{
+  "domain": "jelly_anova",
+  "name": "Jelly Anova",
+  "codeowners": ["@jellyfiche"],
+  "config_flow": true,
+  "documentation": "https://github.com/jellyfiche/jelly-anova",
+  "integration_type": "device",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/jellyfiche/jelly-anova/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

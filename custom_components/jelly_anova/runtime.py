@@ -21,6 +21,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
@@ -332,6 +333,16 @@ class OvenRuntime:
                     self._store.async_delay_save(self._data, HOURS_SAVE_SECONDS)
         self._hours_from = state.updated if cooking else None
 
+    def _fire(self, event: str, cook_id: str) -> None:
+        """Fire a bus event. device_id lets a device trigger pick this oven out."""
+        data: dict[str, str] = {"cook_id": cook_id}
+        device = dr.async_get(self._hass).async_get_device_by_identifier(
+            (DOMAIN, self._entry.entry_id), self._entry.entry_id
+        )
+        if device is not None:
+            data["device_id"] = device.id
+        self._hass.bus.async_fire(event, data)
+
     def _track_cook(self, state: OvenState) -> None:
         """Notice a cook ending, whoever started it."""
         if state.mode == "idle":
@@ -346,7 +357,7 @@ class OvenRuntime:
             # nothing, because it can lag a start, so the saved stop time stays.
             if ended == self._cook_id:
                 self._forget_cook()
-            self._hass.bus.async_fire(EVENT_COOK_FINISHED, {"cook_id": ended})
+            self._fire(EVENT_COOK_FINISHED, ended)
         # The other way a cook is known to be gone: idle, reported after our stop.
         if (
             current is None
@@ -369,7 +380,7 @@ class OvenRuntime:
             self._target_done_id = cook.cook_id
             # Already there on the first report after a restart: it fired before the restart.
             if not after_restart:
-                self._hass.bus.async_fire(EVENT_TARGET_REACHED, {"cook_id": cook.cook_id})
+                self._fire(EVENT_TARGET_REACHED, cook.cook_id)
 
     @staticmethod
     def _at_setpoint(state: OvenState) -> bool:

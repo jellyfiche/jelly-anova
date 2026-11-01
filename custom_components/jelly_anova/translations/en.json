@@ -519,5 +519,11 @@
         }
       }
     }
+  },
+  "device_automation": {
+    "trigger_type": {
+      "cook_target_reached": "{entity_name} reached its target temperature",
+      "cook_finished": "{entity_name} finished a cook"
+    }
   }
 }

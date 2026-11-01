@@ -37,6 +37,8 @@ class Oven:
             self.sent.append((command, payload))
             if self.errors:
                 raise self.errors.pop(0)
+            if command == "CMD_APO_START":
+                self.feed(report("cook", payload["cookId"], stages=payload["stages"]))
             return {"status": "ok"}
 
         async def ensure_open(timeout=10):

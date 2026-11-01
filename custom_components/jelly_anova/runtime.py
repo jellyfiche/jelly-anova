@@ -61,6 +61,7 @@ MAX_STOP_ROUNDS = 3  # stops the oven answered with no sign it worked, before a 
 RESTART_WAIT = 30  # after a restart, how long a due stop waits for a first report
 REPORT_WAIT = 20  # a start waits this long for a fresh report (idle reports can be 15 s apart)
 IDLE_WAIT = 30  # a start during a cook waits this long for the oven to report idle
+START_SEEN_WAIT = 10  # after the oven's ok, how long a start waits for a report showing the cook
 
 # Timer modes that mean it ran out. A missing timer is None, and is never one of these.
 TIMER_ENDED = ("idle", "completed")
@@ -702,6 +703,11 @@ class OvenRuntime:
             self._hold_until = None
             self._last_start = dt_util.utcnow()
             await self._store.async_save(self._data())
+            # A Stop during the save was meant for this start. Sent on, the idle report after
+            # that Stop would clear the new cook's limit while the cook runs.
+            if presses != self._stop_presses:
+                self._forget_cook()
+                raise HomeAssistantError("Stop was pressed, so the new cook was not started.")
             try:
                 await self.connection.send("CMD_APO_START", payload)
             except OvenRefused:
@@ -713,6 +719,17 @@ class OvenRuntime:
                     "The oven did not confirm the start. Please check it: if it did start, "
                     "its stop time still applies."
                 ) from None
+        # The oven answers ok to some starts and ignores them, so ok alone is not a started cook.
+        # Outside the lock: a Stop or another start must not wait for this.
+        seen = await self._wait_for(
+            lambda report: report.cook is not None and report.cook.cook_id == cook_id, START_SEEN_WAIT
+        )
+        if seen is None:
+            # A late start is still possible, so the saved stop time stays.
+            raise HomeAssistantError(
+                "The oven accepted the cook but did not start it. Please check it: if it does "
+                "start, its stop time still applies."
+            )
         return cook_id
 
     async def _make_idle(self) -> None:

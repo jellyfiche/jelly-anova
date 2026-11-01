@@ -14,6 +14,7 @@ from typing import Any
 from .const import DEFAULT_MAX_MINUTES, END_STAGE_TITLE, MAX_C, MAX_F
 
 PROBE_STAGE_PROVEN = False  # set True only after a probe cook has been tried on the real oven
+WET_PREHEAT_PROVEN = False  # set True after a When Preheated cook on the wet bulb has run on the oven
 TIMER_MARGIN_MINUTES = 10  # saved stop time = timer + this, so the oven's own end comes first
 PREHEAT_ALLOWANCE_MINUTES = 60  # extra wait allowed before a timer that starts on preheat or by hand
 END_STAGE_SECONDS = 12 * 3600  # the hidden last stage's timer
@@ -73,6 +74,13 @@ def _check_elements(elements) -> dict:
     return {name: {"on": name in names} for name in ELEMENTS}
 
 
+def _is_whole(value) -> bool:
+    """A real number that is whole and at least 1 (5.0 passes; bool, text, nan and inf do not)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return value == value and abs(value) != float("inf") and value >= 1 and value == int(value)
+
+
 def _check_vent(vent: str) -> str:
     if vent not in VENTS:
         raise CookError("The vent can only be closed, open-mid or open-max.")
@@ -95,6 +103,8 @@ def _timer_entry(mode: str, bulb: str, setpoint_c: float) -> dict | None:
     if mode == "Immediately":
         return None
     if mode == "When Preheated":
+        if bulb == "wet" and not WET_PREHEAT_PROVEN:
+            raise CookError("When Preheated with humidity or sous vide is not tested on this oven yet, so it is not offered.")
         return {"conditions": {"or": {f"nodes.temperatureBulbs.{bulb}.current.celsius": {">=": setpoint_c}}}}
     if mode == "Manually":
         return {"conditions": {"or": {"userAction": {"=": True}}}}
@@ -154,8 +164,7 @@ def _validate(req: CookRequest):
     if probe is not None and not PROBE_STAGE_PROVEN:
         raise CookError("A probe target is not tested on this oven yet, so it is not offered.")
     if req.minutes is not None:
-        m = req.minutes
-        if isinstance(m, bool) or not isinstance(m, (int, float)) or m != m or m in (float("inf"), float("-inf")) or m < 1 or m != int(m):
+        if not _is_whole(req.minutes):
             raise CookError("The timer must be a whole number of minutes, at least 1.")
     if req.minutes is None and req.timer_mode != "Immediately":
         _timer_entry(req.timer_mode, "dry", celsius)  # raises for unknown or food modes
@@ -249,8 +258,8 @@ def updated_stage(active_stage: dict, changes: dict) -> dict:
         do["steamGenerators"] = {"mode": "relative-humidity", "relativeHumidity": {"setpoint": pct}}
     if "timer_seconds" in changes:
         seconds = changes["timer_seconds"]
-        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds <= 0:
-            raise CookError("The timer must be at least one second.")
+        if not _is_whole(seconds):
+            raise CookError("The timer must be a whole number of seconds, at least 1.")
         if "timer" not in do:
             raise CookError("This cook has no timer to change.")
         do["timer"]["initial"] = int(seconds)

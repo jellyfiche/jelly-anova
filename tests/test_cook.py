@@ -149,7 +149,18 @@ def test_timer_when_preheated():
     assert timer["entry"] == {"conditions": {"or": {"nodes.temperatureBulbs.dry.current.celsius": {">=": 60}}}}
 
 
-def test_timer_when_preheated_uses_wet_bulb_for_humidity():
+def test_wet_preheat_refused_until_proven():
+    from custom_components.jelly_anova import cook
+    assert cook.WET_PREHEAT_PROVEN is False
+    with pytest.raises(CookError, match="not tested"):
+        build(temperature_c=60, minutes=5, timer_mode="When Preheated", humidity=50)
+    with pytest.raises(CookError, match="not tested"):
+        build(temperature_f=130, minutes=5, timer_mode="When Preheated", sous_vide=True)
+    assert first_stage(temperature_c=60, minutes=5, humidity=50, timer_mode="Manually")
+
+
+def test_timer_when_preheated_uses_wet_bulb_for_humidity(monkeypatch):
+    monkeypatch.setattr("custom_components.jelly_anova.cook.WET_PREHEAT_PROVEN", True)
     timer = first_stage(temperature_c=60, minutes=5, timer_mode="When Preheated", humidity=50)["do"]["timer"]
     assert timer["entry"] == {"conditions": {"or": {"nodes.temperatureBulbs.wet.current.celsius": {">=": 60}}}}
 
@@ -299,3 +310,14 @@ def test_probe_temperature_range_checked(probe_proven):
         with pytest.raises(CookError):
             build(temperature_c=60, **kw)
     assert first_stage(temperature_c=60, probe_c=249)
+
+
+@pytest.mark.parametrize("seconds", [0.5, 0, 1.5, True, "9", float("nan"), float("inf")])
+def test_updated_stage_timer_seconds_must_be_whole(seconds):
+    with pytest.raises(CookError):
+        updated_stage(first_stage(temperature_c=60, minutes=5), {"timer_seconds": seconds})
+
+
+def test_updated_stage_whole_float_seconds_accepted():
+    new = updated_stage(first_stage(temperature_c=60, minutes=5), {"timer_seconds": 90.0})
+    assert new["do"]["timer"]["initial"] == 90

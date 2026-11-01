@@ -226,3 +226,35 @@ def test_updated_stage_refuses_bad_values():
     for ch in ({"vent": "open"}, {"fan": 101}, {"elements": set()}, {"timer_seconds": 0}, {"bogus": 1}):
         with pytest.raises(CookError):
             updated_stage(stage, ch)
+
+
+def test_updated_stage_fahrenheit():
+    stage = first_stage(temperature_c=60, minutes=5, timer_mode="When Preheated")
+    entry = copy.deepcopy(stage["do"]["timer"]["entry"])
+    stage["entry"] = {"keep": "me"}
+    new = updated_stage(stage, {"temperature_f": 425})
+    assert new["do"]["temperatureBulbs"]["dry"]["setpoint"] == {"celsius": 218.33}
+    assert new["entry"] == {"keep": "me"} and new["do"]["timer"]["entry"] == entry
+    assert updated_stage(stage, {"temperature_c": 100})["do"]["temperatureBulbs"]["dry"]["setpoint"] == {"celsius": 100}
+    with pytest.raises(CookError):
+        updated_stage(stage, {"temperature_c": 100, "temperature_f": 212})
+
+
+def test_updated_stage_over_480f_refused():
+    stage = first_stage(temperature_c=60)
+    with pytest.raises(CookError, match="480"):
+        updated_stage(stage, {"temperature_f": 481})
+    with pytest.raises(CookError):
+        updated_stage(stage, {"temperature_c": 249.5})
+    assert updated_stage(stage, {"temperature_c": 249})
+    sv = first_stage(temperature_f=130, sous_vide=True)
+    with pytest.raises(CookError, match="212"):
+        updated_stage(sv, {"temperature_f": 213})
+
+
+def test_updated_stage_wet_bulb():
+    stage = first_stage(temperature_c=60, humidity=40)
+    new = updated_stage(stage, {"temperature_f": 150})
+    bulbs = new["do"]["temperatureBulbs"]
+    assert bulbs["mode"] == "wet" and bulbs["wet"]["setpoint"] == {"celsius": 65.56}
+    assert "dry" not in bulbs

@@ -22,7 +22,7 @@ VENTS = ("closed", "open-mid", "open-max")
 PROVEN_TIMER_MODES = ("Immediately", "When Preheated", "Manually")
 FOOD_TIMER_MODES = ("When Food Detected", "When Food Removed")
 RACK_RANGE = range(1, 6)
-UPDATE_KEYS = {"start_timer", "vent", "steam_percent", "humidity", "fan", "timer_seconds", "elements"}
+UPDATE_KEYS = {"temperature_f", "temperature_c", "start_timer", "vent", "steam_percent", "humidity", "fan", "timer_seconds", "elements"}
 
 
 class CookError(ValueError):
@@ -127,14 +127,22 @@ def _stage(celsius, seconds, bulb, steam, fan, vent, rack, elements, entry=None,
     return stage
 
 
-def _validate(req: CookRequest):
-    celsius = _celsius(req.temperature_c, req.temperature_f, "oven temperature")
+def _check_temperature(c, f, sous_vide: bool) -> float:
+    """One oven temperature in Celsius: units, cap and sous vide limit, shared by start and update."""
+    celsius = _celsius(c, f, "oven temperature")
     if celsius is None:
         raise CookError("Give an oven temperature.")
     if celsius > MAX_C:
         raise CookError(f"The oven cannot go above {MAX_F} F ({MAX_C:g} C).")
     if celsius <= 0:
         raise CookError("The oven temperature must be above zero.")
+    if sous_vide and celsius > SOUS_VIDE_MAX_C:
+        raise CookError(f"Sous vide cannot go above {SOUS_VIDE_MAX_F} F (100 C).")
+    return celsius
+
+
+def _validate(req: CookRequest):
+    celsius = _check_temperature(req.temperature_c, req.temperature_f, req.sous_vide)
     probe = _celsius(req.probe_c, req.probe_f, "probe temperature")
     if req.minutes is not None and probe is not None:
         raise CookError("A cook can end on a timer or on a probe temperature, not both.")
@@ -146,8 +154,6 @@ def _validate(req: CookRequest):
     if req.steam_percent is not None and req.humidity is not None:
         raise CookError("Give steam or humidity, not both.")
     if req.sous_vide:
-        if celsius > SOUS_VIDE_MAX_C:
-            raise CookError(f"Sous vide cannot go above {SOUS_VIDE_MAX_F} F (100 C).")
         if req.steam_percent is not None or req.humidity not in (None, 100):
             raise CookError("Sous vide runs at 100% humidity; steam and other humidity values do not apply.")
     if req.rack not in RACK_RANGE:
@@ -206,6 +212,13 @@ def updated_stage(active_stage: dict, changes: dict) -> dict:
         raise CookError(f"Cannot change {', '.join(sorted(unknown))} during a cook.")
     stage = copy.deepcopy(active_stage)
     do = stage.setdefault("do", {})
+    if "temperature_f" in changes or "temperature_c" in changes:
+        bulbs = do.setdefault("temperatureBulbs", {})
+        bulb = bulbs.get("mode", "dry")
+        steam = do.get("steamGenerators", {})
+        sous_vide = bulb == "wet" and steam.get("relativeHumidity", {}).get("setpoint") == 100
+        celsius = _check_temperature(changes.get("temperature_c"), changes.get("temperature_f"), sous_vide)
+        bulbs.setdefault(bulb, {})["setpoint"] = {"celsius": celsius}
     if "vent" in changes:
         do.setdefault("exhaustVent", {})["state"] = _check_vent(changes["vent"])
     if "fan" in changes:

@@ -114,3 +114,71 @@ async def test_find_api_key(hass, aioclient_mock):
 async def test_find_api_key_none(hass, aioclient_mock):
     aioclient_mock.get("https://oven.anovaculinary.com", status=500)
     assert await find_api_key(async_get_clientsession(hass)) is None
+
+
+async def test_bad_key_is_not_a_password_problem(hass, aioclient_mock):
+    aioclient_mock.post(
+        SIGN_IN_URL,
+        status=400,
+        json={"error": {"message": "API key not valid. Please pass a valid API key."}},
+    )
+    with pytest.raises(auth.InvalidApiKey) as err:
+        await sign_in(async_get_clientsession(hass), KEY, "a@example.com", "pw")
+    assert KEY not in str(err.value) and "API key not valid" not in str(err.value)
+
+
+async def test_blocked_key_403_is_a_key_problem(hass, aioclient_mock):
+    aioclient_mock.post(RENEW_URL, status=403, json={"error": {"message": "PERMISSION_DENIED"}})
+    a = AnovaAuth(async_get_clientsession(hass), KEY, "refresh-1")
+    with pytest.raises(auth.InvalidApiKey):
+        await a.access_token()
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "INVALID_PASSWORD",
+        "INVALID_LOGIN_CREDENTIALS",
+        "EMAIL_NOT_FOUND",
+        "INVALID_REFRESH_TOKEN",
+        "TOKEN_EXPIRED",
+        "USER_DISABLED",
+        "USER_NOT_FOUND",
+    ],
+)
+async def test_password_and_token_reasons_are_auth_failed(hass, aioclient_mock, reason):
+    aioclient_mock.post(SIGN_IN_URL, status=400, json={"error": {"message": f"{reason} : detail"}})
+    with pytest.raises(AuthFailed):
+        await sign_in(async_get_clientsession(hass), KEY, "a@example.com", "pw")
+
+
+async def test_unknown_400_is_not_auth_failed(hass, aioclient_mock):
+    aioclient_mock.post(SIGN_IN_URL, status=400, text="not json")
+    with pytest.raises(CannotConnect):
+        await sign_in(async_get_clientsession(hass), KEY, "a@example.com", "pw")
+
+
+async def test_find_api_key_caps_scripts(hass, aioclient_mock):
+    tags = "".join(f'<script src="/s{i}.js"></script>' for i in range(60))
+    aioclient_mock.get("https://oven.anovaculinary.com", text=tags)
+    for i in range(60):
+        aioclient_mock.get(f"https://oven.anovaculinary.com/s{i}.js", text="x")
+    assert await find_api_key(async_get_clientsession(hass)) is None
+    assert aioclient_mock.call_count == 1 + 40
+
+
+async def test_find_api_key_deadline(monkeypatch):
+    import asyncio
+
+    class Slow:
+        def get(self, *a, **k):
+            return self
+
+        async def __aenter__(self):
+            await asyncio.sleep(5)
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(auth, "SEARCH_DEADLINE", 0.05)
+    assert await find_api_key(Slow()) is None

@@ -18,6 +18,18 @@ RENEW_URL = "https://securetoken.googleapis.com/v1/token"
 
 RENEW_MARGIN = 300  # renew when less than 5 minutes are left
 DEFAULT_LIFETIME = 3600
+MAX_SCRIPTS = 40  # most scripts read when looking for the web key
+SEARCH_DEADLINE = 60  # seconds for the whole key search
+# Google's reasons that mean the person's password or login key is wrong.
+AUTH_REASONS = {
+    "INVALID_PASSWORD",
+    "INVALID_LOGIN_CREDENTIALS",
+    "EMAIL_NOT_FOUND",
+    "INVALID_REFRESH_TOKEN",
+    "TOKEN_EXPIRED",
+    "USER_DISABLED",
+    "USER_NOT_FOUND",
+}
 TIMEOUT = aiohttp.ClientTimeout(total=20)
 
 _SCRIPT_SRC = re.compile(r"""<script[^>]+src=["'](/[^"']*\.js)["']""", re.IGNORECASE)
@@ -28,8 +40,26 @@ class AuthFailed(Exception):
     """Anova refused the email and password, or the stored login key."""
 
 
+class InvalidApiKey(Exception):
+    """Anova's web key was refused (stale, wrong or blocked), not the password."""
+
+
 class CannotConnect(Exception):
     """Anova or its sign-in service could not be reached or had a problem."""
+
+
+async def _refusal(reply) -> Exception:
+    """Decide from Google's reason what a 4xx means. The reason text is never repeated."""
+    try:
+        body = await reply.json(content_type=None)
+        message = str(body["error"]["message"])
+    except (aiohttp.ClientError, ValueError, KeyError, TypeError):
+        message = ""
+    if message.split(" ")[0].strip(":") in AUTH_REASONS:
+        return AuthFailed("Anova refused the login")
+    if reply.status == 403 or "API key" in message or "API_KEY" in message:
+        return InvalidApiKey("Anova refused the web key")
+    return CannotConnect("Anova could not be reached")
 
 
 async def _post(session, url, key, **kwargs) -> dict:
@@ -39,7 +69,7 @@ async def _post(session, url, key, **kwargs) -> dict:
             url, params={"key": key}, timeout=TIMEOUT, **kwargs
         ) as reply:
             if reply.status in (400, 401, 403):
-                raise AuthFailed("Anova refused the login")
+                raise await _refusal(reply)
             if reply.status != 200:
                 raise CannotConnect("Anova could not be reached")
             return await reply.json(content_type=None)
@@ -65,21 +95,20 @@ async def sign_in(session, api_key: str, email: str, password: str) -> str:
 async def find_api_key(session) -> str | None:
     """Read Anova's public web API key from its own website, or None if not found."""
     try:
-        async with session.get(SITE, timeout=TIMEOUT) as page:
-            if page.status != 200:
-                return None
-            html = await page.text()
-        paths = list(dict.fromkeys(_SCRIPT_SRC.findall(html)))
-        for path in paths:
-            if path.startswith("//"):
-                continue
-            async with session.get(SITE + path, timeout=TIMEOUT) as script:
-                if script.status != 200:
-                    continue
-                found = _API_KEY.search(await script.text())
-            if found:
-                return found.group(0)
-    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        async with asyncio.timeout(SEARCH_DEADLINE):
+            async with session.get(SITE, timeout=TIMEOUT) as page:
+                if page.status != 200:
+                    return None
+                html = await page.text()
+            paths = [p for p in dict.fromkeys(_SCRIPT_SRC.findall(html)) if not p.startswith("//")]
+            for path in paths[:MAX_SCRIPTS]:
+                async with session.get(SITE + path, timeout=TIMEOUT) as script:
+                    if script.status != 200:
+                        continue
+                    found = _API_KEY.search(await script.text())
+                if found:
+                    return found.group(0)
+    except (aiohttp.ClientError, TimeoutError, ValueError):
         return None
     return None
 

@@ -14,7 +14,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .auth import AnovaAuth, AuthFailed, CannotConnect, find_api_key, sign_in
+from .auth import AnovaAuth, AuthFailed, CannotConnect, InvalidApiKey, find_api_key, sign_in
 from .const import DOMAIN
 
 
@@ -26,16 +26,33 @@ class JellyAnovaConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._api_key: str | None = None
         self._refresh_token: str | None = None
+        self._stored_key: str | None = None
+        self._tried_discovery = False
+        self._ask_key = False
         self._reauth_entry = None
 
-    async def _key_known(self) -> bool:
-        """Look the public web API key up once per flow."""
-        if not self._api_key:
-            self._api_key = await find_api_key(async_get_clientsession(self.hass))
-        return bool(self._api_key)
+    async def _discover(self) -> None:
+        """Read the public web key from Anova's site once per flow, even if it fails.
+
+        A key found now beats a stored one; with none found the stored key is kept.
+        """
+        if self._tried_discovery:
+            return
+        self._tried_discovery = True
+        found = await find_api_key(async_get_clientsession(self.hass))
+        if found:
+            self._api_key = found
+        else:
+            self._api_key = self._stored_key
+            self._ask_key = True
+
+    def _key_trouble(self, errors: dict) -> None:
+        """The key could be the problem: show the key box."""
+        if errors.get("base") in ("invalid_api_key", "cannot_connect"):
+            self._ask_key = True
 
     def _schema(self, fields: dict, ask_key: bool) -> vol.Schema:
-        if ask_key:
+        if ask_key:  # a typed key replaces a found or stored one
             fields = {**fields, vol.Optional("api_key", default=""): str}
         return vol.Schema(fields)
 
@@ -54,7 +71,7 @@ class JellyAnovaConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
         self._reauth_entry = self._get_reauth_entry()
-        self._api_key = entry_data.get("api_key") or None
+        self._stored_key = entry_data.get("api_key") or None
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(self, user_input=None) -> ConfigFlowResult:
@@ -62,7 +79,7 @@ class JellyAnovaConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def _login(self, step_id: str, user_input) -> ConfigFlowResult:
         errors: dict[str, str] = {}
-        ask_key = not await self._key_known()
+        await self._discover()
         if user_input is not None:
             self._take_key(user_input)
             if not self._api_key:
@@ -77,22 +94,30 @@ class JellyAnovaConfigFlow(ConfigFlow, domain=DOMAIN):
                     )
                 except AuthFailed:
                     errors["base"] = "invalid_auth"
+                except InvalidApiKey:
+                    errors["base"] = "invalid_api_key"
                 except CannotConnect:
                     errors["base"] = "cannot_connect"
                 else:
                     if self._reauth_entry is not None:
                         return self.async_update_reload_and_abort(
                             self._reauth_entry,
-                            data_updates={"refresh_token": self._refresh_token},
+                            data_updates={
+                                "refresh_token": self._refresh_token,
+                                "api_key": self._api_key,
+                            },
                             reason="reauth_successful",
                         )
                     return await self.async_step_personal()
-        schema = self._schema({vol.Required("email"): str, vol.Required("password"): str}, ask_key)
+        self._key_trouble(errors)
+        schema = self._schema(
+            {vol.Required("email"): str, vol.Required("password"): str}, self._ask_key
+        )
         return self.async_show_form(step_id=step_id, data_schema=schema, errors=errors)
 
     async def async_step_paste(self, user_input=None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
-        ask_key = not await self._key_known()
+        await self._discover()
         if user_input is not None:
             self._take_key(user_input)
             token = user_input["refresh_token"].strip()
@@ -104,12 +129,15 @@ class JellyAnovaConfigFlow(ConfigFlow, domain=DOMAIN):
                     await check.access_token()
                 except AuthFailed:
                     errors["base"] = "invalid_auth"
+                except InvalidApiKey:
+                    errors["base"] = "invalid_api_key"
                 except CannotConnect:
                     errors["base"] = "cannot_connect"
                 else:
                     self._refresh_token = check.refresh_token
                     return await self.async_step_personal()
-        schema = self._schema({vol.Required("refresh_token"): str}, ask_key)
+        self._key_trouble(errors)
+        schema = self._schema({vol.Required("refresh_token"): str}, self._ask_key)
         return self.async_show_form(step_id="paste", data_schema=schema, errors=errors)
 
     async def async_step_personal(self, user_input=None) -> ConfigFlowResult:

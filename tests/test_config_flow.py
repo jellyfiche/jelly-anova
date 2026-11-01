@@ -12,6 +12,7 @@ KEY = "fake-api-key"
 SIGN_IN_URL = f"{auth.SIGN_IN_URL}?key={KEY}"
 RENEW_URL = f"{auth.RENEW_URL}?key={KEY}"
 EMAIL = "someone@example.com"
+OLD_KEY = "stale-value"
 TYPED = "placeholder-12345"
 
 
@@ -120,7 +121,7 @@ async def test_flow_paste_path(hass, aioclient_mock, key_found):
 
 
 async def test_flow_paste_bad_token(hass, aioclient_mock, key_found):
-    aioclient_mock.post(RENEW_URL, status=400, json={})
+    aioclient_mock.post(RENEW_URL, status=400, json={"error": {"message": "INVALID_REFRESH_TOKEN"}})
     result = await start(hass)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"next_step_id": "paste"}
@@ -156,3 +157,99 @@ async def test_reauth_updates_token(hass, aioclient_mock, key_found):
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
     assert entry.data == {"refresh_token": "refresh-new", "personal_token": "pat-1", "api_key": KEY}
+
+
+BAD_KEY_BODY = {"error": {"message": "API key not valid. Please pass a valid API key."}}
+
+
+def discovers(monkeypatch, value):
+    async def found(session):
+        return value
+
+    monkeypatch.setattr("custom_components.jelly_anova.config_flow.find_api_key", found)
+
+
+async def test_reauth_stale_stored_key_is_replaced_by_fresh_discovery(
+    hass, aioclient_mock, monkeypatch
+):
+    stale_url = f"{auth.SIGN_IN_URL}?key={OLD_KEY}"
+    aioclient_mock.post(stale_url, status=400, json=BAD_KEY_BODY)
+    aioclient_mock.post(SIGN_IN_URL, json={"refreshToken": "refresh-new"})
+    discovers(monkeypatch, KEY)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=DOMAIN,
+        data={"refresh_token": "old", "personal_token": "", "api_key": OLD_KEY},
+    )
+    entry.add_to_hass(hass)
+    result = await entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"email": EMAIL, "password": TYPED}
+    )
+    assert result["reason"] == "reauth_successful"
+    assert entry.data["api_key"] == KEY
+    assert entry.data["refresh_token"] == "refresh-new"
+
+
+async def test_reauth_falls_back_to_stored_key_then_asks(hass, aioclient_mock, monkeypatch):
+    stale_url = f"{auth.SIGN_IN_URL}?key={OLD_KEY}"
+    aioclient_mock.post(stale_url, status=400, json=BAD_KEY_BODY)
+    aioclient_mock.post(SIGN_IN_URL, json={"refreshToken": "refresh-new"})
+    discovers(monkeypatch, None)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=DOMAIN,
+        data={"refresh_token": "old", "personal_token": "", "api_key": OLD_KEY},
+    )
+    entry.add_to_hass(hass)
+    result = await entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"email": EMAIL, "password": TYPED}
+    )
+    assert result["errors"] == {"base": "invalid_api_key"}
+    assert "api_key" in result["data_schema"].schema
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"email": EMAIL, "password": TYPED, "api_key": KEY}
+    )
+    assert result["reason"] == "reauth_successful"
+    assert entry.data["api_key"] == KEY
+
+
+async def test_typed_key_overrides_found_key(hass, aioclient_mock, monkeypatch):
+    bad_url = f"{auth.SIGN_IN_URL}?key=found-bad"
+    aioclient_mock.post(bad_url, status=400, json=BAD_KEY_BODY)
+    aioclient_mock.post(SIGN_IN_URL, json={"refreshToken": "refresh-1"})
+    discovers(monkeypatch, "found-bad")
+    result = await start(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "login"}
+    )
+    assert "api_key" not in result["data_schema"].schema
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"email": EMAIL, "password": TYPED}
+    )
+    assert result["errors"] == {"base": "invalid_api_key"}
+    assert "api_key" in result["data_schema"].schema
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"email": EMAIL, "password": TYPED, "api_key": KEY}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["data"]["api_key"] == KEY
+
+
+async def test_failed_discovery_is_not_repeated(hass, aioclient_mock, monkeypatch):
+    calls = []
+
+    async def missing(session):
+        calls.append(1)
+
+    monkeypatch.setattr("custom_components.jelly_anova.config_flow.find_api_key", missing)
+    result = await start(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "login"}
+    )
+    for _ in range(2):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"email": EMAIL, "password": TYPED}
+        )
+    assert len(calls) == 1

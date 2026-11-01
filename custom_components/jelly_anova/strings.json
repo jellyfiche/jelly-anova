@@ -52,6 +52,7 @@
     "error": {
       "invalid_auth": "Wrong email or password, or the login key is not valid.",
       "cannot_connect": "Could not reach Anova. Try again in a minute.",
+      "invalid_api_key": "Anova did not accept its web key. Paste a current one into the key box, or try again later.",
       "no_api_key": "The Anova web key could not be found. Paste it into the key box."
     },
     "abort": {

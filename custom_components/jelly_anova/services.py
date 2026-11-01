@@ -4,7 +4,9 @@ They are registered when Home Assistant loads the integration (async_setup), so 
 oven set up and then say so in plain words.
 
 start_cook takes the new short names (temperature_f, probe_f, minutes ...) and every field name the
-old andr83 integration had, so old scripts convert by renaming one action. Old meanings:
+old andr83 integration had. A script from it still needs checking, not only its action renamed: what
+is unproven on the 2.0 is refused (a probe target, the food timer modes, When Preheated on the wet
+bulb), a wet-bulb cook stops at 212 F, and raw stages need rewriting for the 2.0. Old meanings:
 `target_humidity` was the steam percentage (old scripts say "50% steam"), or the humidity when
 `sous_vide` is on; `timer` was a duration; `heating_top/bottom/rear` were switches; `device_id` is
 accepted and ignored because there is one oven.

@@ -2,7 +2,16 @@
 
 A Home Assistant custom integration for the Anova Precision Oven 2.0.
 
-Work in progress: nothing to install yet.
+## Install
+
+Needs Home Assistant 2026.10 or newer and [HACS](https://hacs.xyz). It is installed as a custom
+repository:
+
+1. In HACS, open the three-dot menu and choose **Custom repositories**.
+2. Add `https://github.com/jellyfiche/jelly-anova` with the type **Integration**.
+3. Find **Jelly Anova** in HACS, download it, and restart Home Assistant.
+4. Go to **Settings > Devices & services > Add integration**, choose **Jelly Anova**, and sign in
+   with your Anova account. Your password is used once and is not saved.
 
 ## Unofficial, and it can break
 

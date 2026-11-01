@@ -1,5 +1,7 @@
 """Device triggers: the two oven events, filtered to the one device."""
 
+from pathlib import Path
+
 import pytest
 from homeassistant.components import automation
 from homeassistant.components.device_automation import DeviceAutomationType, async_get_device_automations
@@ -11,6 +13,14 @@ from custom_components.jelly_anova.const import DOMAIN
 
 from .test_runtime import report
 from .test_setup import DATA, fake, setup  # noqa: F401
+
+
+def test_trigger_names_are_fixed_text():
+    """A device trigger has no entity, so {entity_name} would show as written."""
+    package = Path(__file__).parents[1] / "custom_components" / "jelly_anova"
+    strings = (package / "strings.json").read_text()
+    assert "{entity_name}" not in strings
+    assert strings == (package / "translations" / "en.json").read_text()
 
 
 async def oven(hass):

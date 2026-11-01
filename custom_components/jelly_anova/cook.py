@@ -1,6 +1,8 @@
 """Build cook commands for the Anova Precision Oven 2.0. Pure Python, no Home Assistant imports.
 
-Every field shape here was accepted by the real oven (spike/battery.py, protocol-notes.md).
+Field shapes follow the ones the real oven accepted (spike/battery.py, protocol-notes.md), except
+two that are unproven: the probe target stage (PROBE_STAGE_PROVEN, refused while false) and the
+When Preheated timer entry on the wet bulb (only the dry bulb was tested).
 """
 from __future__ import annotations
 
@@ -11,6 +13,7 @@ from typing import Any
 
 from .const import DEFAULT_MAX_MINUTES, END_STAGE_TITLE, MAX_C, MAX_F
 
+PROBE_STAGE_PROVEN = False  # set True only after a probe cook has been tried on the real oven
 TIMER_MARGIN_MINUTES = 10  # saved stop time = timer + this, so the oven's own end comes first
 PREHEAT_ALLOWANCE_MINUTES = 60  # extra wait allowed before a timer that starts on preheat or by hand
 END_STAGE_SECONDS = 12 * 3600  # the hidden last stage's timer
@@ -144,10 +147,16 @@ def _check_temperature(c, f, sous_vide: bool) -> float:
 def _validate(req: CookRequest):
     celsius = _check_temperature(req.temperature_c, req.temperature_f, req.sous_vide)
     probe = _celsius(req.probe_c, req.probe_f, "probe temperature")
+    if probe is not None and not 0 < probe <= MAX_C:
+        raise CookError(f"The probe temperature must be above zero and no more than {MAX_F} F ({MAX_C:g} C).")
     if req.minutes is not None and probe is not None:
         raise CookError("A cook can end on a timer or on a probe temperature, not both.")
-    if req.minutes is not None and (isinstance(req.minutes, bool) or req.minutes <= 0):
-        raise CookError("The timer must be at least one minute.")
+    if probe is not None and not PROBE_STAGE_PROVEN:
+        raise CookError("A probe target is not tested on this oven yet, so it is not offered.")
+    if req.minutes is not None:
+        m = req.minutes
+        if isinstance(m, bool) or not isinstance(m, (int, float)) or m != m or m < 1 or m != int(m):
+            raise CookError("The timer must be a whole number of minutes, at least 1.")
     if req.minutes is None and req.timer_mode != "Immediately":
         _timer_entry(req.timer_mode, "dry", celsius)  # raises for unknown or food modes
         raise CookError("A timer mode needs a timer: give the minutes.")
@@ -229,6 +238,8 @@ def updated_stage(active_stage: dict, changes: dict) -> dict:
         for name, value in wanted.items():
             current.setdefault(name, {}).update(value)
     if "steam_percent" in changes:
+        if do.get("temperatureBulbs", {}).get("mode") == "wet":
+            raise CookError("This cook uses humidity, so steam percent does not apply; change humidity instead.")
         pct = _check_percent(changes["steam_percent"], "Steam")
         do["steamGenerators"] = {"mode": "steam-percentage", "steamPercentage": {"setpoint": pct}}
     if "humidity" in changes:
@@ -240,7 +251,9 @@ def updated_stage(active_stage: dict, changes: dict) -> dict:
         seconds = changes["timer_seconds"]
         if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds <= 0:
             raise CookError("The timer must be at least one second.")
-        do.setdefault("timer", {})["initial"] = int(seconds)
+        if "timer" not in do:
+            raise CookError("This cook has no timer to change.")
+        do["timer"]["initial"] = int(seconds)
     if changes.get("start_timer"):
         do.get("timer", {}).pop("entry", None)
     return stage

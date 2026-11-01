@@ -61,7 +61,21 @@ def test_timed_cook_ends_in_cool_stage():
     assert do["timer"] == {"initial": 43200}
 
 
-def test_untimed_cook_has_one_stage():
+@pytest.fixture
+def probe_proven(monkeypatch):
+    monkeypatch.setattr("custom_components.jelly_anova.cook.PROBE_STAGE_PROVEN", True)
+
+
+def test_probe_refused_until_proven():
+    from custom_components.jelly_anova import cook
+    assert cook.PROBE_STAGE_PROVEN is False
+    with pytest.raises(CookError, match="not tested"):
+        build(temperature_c=60, probe_c=50)
+    with pytest.raises(CookError, match="not tested"):
+        build(temperature_c=60, probe_f=122)
+
+
+def test_untimed_cook_has_one_stage(probe_proven):
     stages = build(temperature_c=60, probe_c=50)[0]["stages"]
     assert len(stages) == 1
     assert stages[0]["do"]["temperatureProbe"] == {"setpoint": {"celsius": 50}}
@@ -92,12 +106,12 @@ def test_sous_vide_over_212f_refused():
     assert do["steamGenerators"] == {"mode": "relative-humidity", "relativeHumidity": {"setpoint": 100}}
 
 
-def test_timer_and_probe_refused():
+def test_timer_and_probe_refused(probe_proven):
     with pytest.raises(CookError):
         build(temperature_c=60, minutes=5, probe_c=50)
 
 
-def test_both_units_refused():
+def test_both_units_refused(probe_proven):
     with pytest.raises(CookError):
         build(temperature_c=60, temperature_f=140)
     with pytest.raises(CookError):
@@ -258,3 +272,30 @@ def test_updated_stage_wet_bulb():
     bulbs = new["do"]["temperatureBulbs"]
     assert bulbs["mode"] == "wet" and bulbs["wet"]["setpoint"] == {"celsius": 65.56}
     assert "dry" not in bulbs
+
+
+def test_updated_stage_timer_seconds_needs_a_timer():
+    with pytest.raises(CookError, match="timer"):
+        updated_stage(first_stage(temperature_c=60), {"timer_seconds": 60})
+
+
+def test_updated_stage_steam_percent_refused_on_wet_bulb():
+    with pytest.raises(CookError, match="humidity"):
+        updated_stage(first_stage(temperature_c=60, humidity=40), {"steam_percent": 20})
+
+
+@pytest.mark.parametrize("minutes", [1.5, 0.5, True, "5", float("nan")])
+def test_minutes_must_be_whole(minutes):
+    with pytest.raises(CookError):
+        build(temperature_c=60, minutes=minutes)
+
+
+def test_whole_float_minutes_accepted():
+    assert first_stage(temperature_c=60, minutes=5.0)["do"]["timer"]["initial"] == 300
+
+
+def test_probe_temperature_range_checked(probe_proven):
+    for kw in ({"probe_c": 250}, {"probe_f": 481}, {"probe_c": 0}, {"probe_c": -5}):
+        with pytest.raises(CookError):
+            build(temperature_c=60, **kw)
+    assert first_stage(temperature_c=60, probe_c=249)

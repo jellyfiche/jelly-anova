@@ -59,5 +59,15 @@
       "single_instance_allowed": "Jelly Anova is already set up.",
       "reauth_successful": "Signed in again."
     }
+  },
+  "issues": {
+    "login_failed": {
+      "title": "Anova login stopped working during a cook",
+      "description": "Anova no longer accepts the saved login while the oven may be cooking, so Home Assistant cannot see the oven. Check the oven, then sign in again from the Jelly Anova integration. A saved stop time still goes out, through the personal token if you added one."
+    },
+    "stop_failed": {
+      "title": "The oven could not be stopped",
+      "description": "Home Assistant tried to stop the oven at the end of a cook and could not reach it. The oven may still be heating, so please check it now. Home Assistant keeps trying."
+    }
   }
 }

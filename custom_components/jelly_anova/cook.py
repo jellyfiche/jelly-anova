@@ -7,6 +7,7 @@ When Preheated timer entry on the wet bulb (only the dry bulb was tested).
 from __future__ import annotations
 
 import copy
+import math
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -19,8 +20,11 @@ TIMER_MARGIN_MINUTES = 10  # saved stop time = timer + this, so the oven's own e
 PREHEAT_ALLOWANCE_MINUTES = 60  # extra wait allowed before a timer that starts on preheat or by hand
 END_STAGE_SECONDS = 12 * 3600  # the hidden last stage's timer
 END_STAGE_CELSIUS = 25
-SOUS_VIDE_MAX_F = 212
-SOUS_VIDE_MAX_C = 100.0
+# The Anova app's limit for any wet-bulb cook (sous vide or humidity). Unproven above 55 C on this
+# oven: nothing hotter on the wet bulb has been tried, so the app's limit stands.
+WET_MAX_F = 212
+WET_MAX_C = 100.0
+FAN_OFF_REFUSED = "Fan speed 0 is only proven with the oven idle, so it is refused during a cook."
 ELEMENTS = ("top", "bottom", "rear")
 VENTS = ("closed", "open-mid", "open-max")
 PROVEN_TIMER_MODES = ("Immediately", "When Preheated", "Manually")
@@ -58,6 +62,9 @@ def _f_to_c(f: float) -> float:
 def _celsius(c: float | None, f: float | None, what: str) -> float | None:
     if c is not None and f is not None:
         raise CookError(f"Give the {what} in Celsius or Fahrenheit, not both.")
+    given = f if f is not None else c
+    if given is not None and not math.isfinite(given):
+        raise CookError(f"The {what} must be a real number.")
     if f is not None:
         if what == "oven temperature" and f > MAX_F:
             raise CookError(f"The oven cannot go above {MAX_F} F ({MAX_C:g} C).")
@@ -88,8 +95,11 @@ def _check_vent(vent: str) -> str:
 
 
 def _check_fan(fan) -> int:
+    """The fan speed of a cook. Whole numbers are sent, so anything below 1 would be 0."""
     if isinstance(fan, bool) or not isinstance(fan, (int, float)) or not 0 <= fan <= 100:
-        raise CookError("Fan speed must be 0 to 100.")
+        raise CookError("Fan speed must be 1 to 100.")
+    if fan < 1:
+        raise CookError(FAN_OFF_REFUSED)
     return int(fan)
 
 
@@ -170,8 +180,8 @@ def with_end_stage(stages: list[dict]) -> list[dict]:
     return [*kept, end_stage(rack if isinstance(rack, int) else 3)]
 
 
-def _check_temperature(c, f, sous_vide: bool) -> float:
-    """One oven temperature in Celsius: units, cap and sous vide limit, shared by start and update."""
+def _check_temperature(c, f, wet: bool) -> float:
+    """One oven temperature in Celsius: units, cap and wet-bulb limit, shared by start and update."""
     celsius = _celsius(c, f, "oven temperature")
     if celsius is None:
         raise CookError("Give an oven temperature.")
@@ -179,13 +189,14 @@ def _check_temperature(c, f, sous_vide: bool) -> float:
         raise CookError(f"The oven cannot go above {MAX_F} F ({MAX_C:g} C).")
     if celsius <= 0:
         raise CookError("The oven temperature must be above zero.")
-    if sous_vide and celsius > SOUS_VIDE_MAX_C:
-        raise CookError(f"Sous vide cannot go above {SOUS_VIDE_MAX_F} F (100 C).")
+    if wet and celsius > WET_MAX_C:
+        raise CookError(f"With humidity or sous vide the oven cannot go above {WET_MAX_F} F ({WET_MAX_C:g} C).")
     return celsius
 
 
 def _validate(req: CookRequest):
-    celsius = _check_temperature(req.temperature_c, req.temperature_f, req.sous_vide)
+    wet = req.sous_vide or req.humidity is not None  # as build_start picks the bulb
+    celsius = _check_temperature(req.temperature_c, req.temperature_f, wet)
     probe = _celsius(req.probe_c, req.probe_f, "probe temperature")
     if probe is not None and not 0 < probe <= MAX_C:
         raise CookError(f"The probe temperature must be above zero and no more than {MAX_F} F ({MAX_C:g} C).")
@@ -257,9 +268,7 @@ def updated_stage(active_stage: dict, changes: dict) -> dict:
     if "temperature_f" in changes or "temperature_c" in changes:
         bulbs = do.setdefault("temperatureBulbs", {})
         bulb = bulbs.get("mode", "dry")
-        steam = do.get("steamGenerators", {})
-        sous_vide = bulb == "wet" and steam.get("relativeHumidity", {}).get("setpoint") == 100
-        celsius = _check_temperature(changes.get("temperature_c"), changes.get("temperature_f"), sous_vide)
+        celsius = _check_temperature(changes.get("temperature_c"), changes.get("temperature_f"), bulb == "wet")
         bulbs.setdefault(bulb, {})["setpoint"] = {"celsius": celsius}
     if "vent" in changes:
         do.setdefault("exhaustVent", {})["state"] = _check_vent(changes["vent"])

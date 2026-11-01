@@ -63,8 +63,8 @@ class TargetTemperature(JellyAnovaEntity, NumberEntity):
 
 
 class FanSpeed(JellyAnovaEntity, NumberEntity):
-    """The fan, 0 to 100. Works while idle. The oven's reports give the fan as words (low, mid,
-    high), so this shows the last value sent."""
+    """The fan, 0 to 100. Works while idle; 0 is refused during a cook, as only idle is proven.
+    The oven's reports give the fan as words (low, mid, high), so this shows the last value sent."""
 
     _attr_assumed_state = True
     _commanded: float | None = None

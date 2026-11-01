@@ -5,7 +5,7 @@ from datetime import timedelta
 
 import pytest
 from freezegun import freeze_time
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
@@ -366,6 +366,60 @@ async def test_start_not_connected_yet_is_a_plain_error(rig):
     rig.conn.cooker_id = None
     with pytest.raises(HomeAssistantError):
         await rt.start(CookRequest(temperature_f=350))
+
+
+def raw_stage(bulb="dry", **setpoint):
+    return [{"do": {"temperatureBulbs": {"mode": bulb, bulb: {"setpoint": setpoint}}}}]
+
+
+@pytest.mark.parametrize(
+    "stages",
+    [
+        raw_stage(fahrenheit=481),
+        raw_stage(celsius=float("nan")),
+        raw_stage(fahrenheit=float("inf")),
+        raw_stage("wet", celsius=100.5),
+        raw_stage("wet", fahrenheit=213),
+        [{"do": {"fan": {"speed": 0}}}],
+    ],
+)
+async def test_start_custom_refuses_what_the_oven_should_not_get(rig, stages):
+    rt = await rig.boot()
+    rt.on_state(report("idle"))
+    with pytest.raises(CookError):
+        await rt.start_custom(stages, None)
+    assert rig.conn.sent == []
+
+
+async def test_raw_stages_at_the_limits_pass(rig):
+    rt = await rig.boot()
+    rt.on_state(report("idle"))
+    for stages in (raw_stage(fahrenheit=480), raw_stage("wet", fahrenheit=212), raw_stage("wet", celsius=100)):
+        assert runtime_module._check_stages(stages) is None
+
+
+async def test_fan_off_needs_a_fresh_idle_report(rig, freezer):
+    rt = await rig.boot()
+    with pytest.raises(ServiceValidationError, match="only proven"):
+        await rt.set_fan(0)  # no report yet: not known to be idle
+    rt.on_state(report("cook", OTHER))
+    with pytest.raises(ServiceValidationError, match="only proven"):
+        await rt.set_fan(0.5)  # sent as a whole number, so this would be 0
+    assert rig.conn.sent == []
+    await rt.set_fan(50)
+    rt.on_state(report("idle"))
+    await rt.set_fan(0)
+    assert rig.conn.sent[-1] == ("CMD_APO_SET_FAN", {"speed": 0})
+    await rig.advance(freezer, 61)
+    with pytest.raises(ServiceValidationError, match="only proven"):
+        await rt.set_fan(0)
+
+
+async def test_fan_off_refused_for_a_saved_cook_an_idle_report_lags(rig):
+    rt, _ = await started(rig, shown=False)
+    rt.on_state(report("idle"))
+    with pytest.raises(ServiceValidationError, match="only proven"):
+        await rt.set_fan(0)
 
 
 async def test_start_custom_max_minutes(rig, freezer):

@@ -553,6 +553,17 @@ async def test_fan_number_works_idle(oven):
     assert oven.sent == [("CMD_APO_SET_FAN", {"speed": 60})]
 
 
+async def test_fan_number_refuses_off_during_a_cook(oven):
+    entity_id = oven.entity("number", "fan")
+    await oven.hass.services.async_call("number", "set_value", {"entity_id": entity_id, "value": 0}, blocking=True)
+    assert oven.sent == [("CMD_APO_SET_FAN", {"speed": 0})]  # idle: proven
+    oven.sent.clear()
+    running(oven)
+    with pytest.raises(ServiceValidationError, match="only proven"):
+        await oven.hass.services.async_call("number", "set_value", {"entity_id": entity_id, "value": 0}, blocking=True)
+    assert oven.sent == []
+
+
 async def test_door_light_switch_follows_last_command(oven):
     entity_id = oven.entity("switch", "door_light")
     await oven.hass.services.async_call("switch", "turn_on", {"entity_id": entity_id}, blocking=True)
@@ -628,7 +639,8 @@ def test_fahrenheit_selectors_and_no_typos():
     assert start["timer_mode"]["selector"]["select"]["options"] == [
         "Immediately", "When Preheated", "Manually", "When Food Detected", "When Food Removed",
     ]  # fmt: skip
-    assert start["fan"]["selector"]["number"]["min"] == 0 and start["fan"]["selector"]["number"]["max"] == 100
+    assert start["fan"]["selector"]["number"]["min"] == 1 and start["fan"]["selector"]["number"]["max"] == 100
+    assert data["update_cook"]["fields"]["fan"]["selector"]["number"]["min"] == 1
     strings = json.dumps(json.loads((PACKAGE / "strings.json").read_text())["services"])
     for typo in ("teh ", "recieve", "seperate", "temprature", "occured"):
         assert typo not in strings and typo not in text

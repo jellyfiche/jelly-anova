@@ -106,6 +106,53 @@ def test_sous_vide_over_212f_refused():
     assert do["steamGenerators"] == {"mode": "relative-humidity", "relativeHumidity": {"setpoint": 100}}
 
 
+def test_wet_bulb_cooks_capped_at_212f():
+    with pytest.raises(CookError, match="212"):
+        build(temperature_f=213, humidity=40)
+    with pytest.raises(CookError, match="100"):
+        build(temperature_c=100.5, humidity=40)
+    assert first_stage(temperature_f=212, humidity=40)["do"]["temperatureBulbs"]["wet"]["setpoint"] == {"celsius": 100}
+    assert first_stage(temperature_f=213, steam_percent=40)  # the dry bulb keeps the oven's cap
+
+
+def test_wet_bulb_cap_holds_at_update_and_after_a_humidity_change():
+    wet = first_stage(temperature_c=60, humidity=40)
+    with pytest.raises(CookError, match="212"):
+        updated_stage(wet, {"temperature_f": 213})
+    was_sous_vide = first_stage(temperature_c=60, sous_vide=True)
+    lowered = updated_stage(was_sous_vide, {"humidity": 50})
+    with pytest.raises(CookError, match="212"):
+        updated_stage(lowered, {"temperature_f": 213})
+    with pytest.raises(CookError, match="212"):
+        updated_stage(was_sous_vide, {"humidity": 50, "temperature_f": 213})
+    assert updated_stage(lowered, {"temperature_f": 212})
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("field", ["temperature_c", "temperature_f"])
+def test_temperature_must_be_a_real_number(field, value):
+    with pytest.raises(CookError, match="real number"):
+        build(**{field: value})
+    with pytest.raises(CookError, match="real number"):
+        updated_stage(first_stage(temperature_c=60), {field: value})
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("field", ["probe_c", "probe_f"])
+def test_probe_must_be_a_real_number(field, value):
+    with pytest.raises(CookError, match="real number"):
+        build(temperature_c=60, **{field: value})
+
+
+@pytest.mark.parametrize("fan", [0, 0.5])
+def test_fan_off_refused_during_a_cook(fan):
+    with pytest.raises(CookError, match="only proven"):
+        build(temperature_c=60, fan=fan)
+    with pytest.raises(CookError, match="only proven"):
+        updated_stage(first_stage(temperature_c=60), {"fan": fan})
+    assert first_stage(temperature_c=60, fan=1)["do"]["fan"] == {"speed": 1}
+
+
 def test_timer_and_probe_refused(probe_proven):
     with pytest.raises(CookError):
         build(temperature_c=60, minutes=5, probe_c=50)

@@ -373,7 +373,7 @@
         },
         "fan": {
           "name": "Fan",
-          "description": "Fan speed, 0 to 100."
+          "description": "Fan speed, 1 to 100."
         },
         "vent": {
           "name": "Vent",
@@ -479,7 +479,7 @@
         },
         "fan": {
           "name": "Fan",
-          "description": "New fan speed, 0 to 100."
+          "description": "New fan speed, 1 to 100."
         },
         "vent": {
           "name": "Vent",

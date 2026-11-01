@@ -39,8 +39,11 @@ from .const import (
     STALE_SECONDS,
 )
 from .cook import (
+    FAN_OFF_REFUSED,
     PREHEAT_ALLOWANCE_MINUTES,
     TIMER_MARGIN_MINUTES,
+    WET_MAX_C,
+    WET_MAX_F,
     CookError,
     CookRequest,
     build_start,
@@ -84,17 +87,31 @@ def _check_max_minutes(value: Any) -> None:
         raise CookError("The maximum cook time must be at least 1 minute.")
 
 
+def _check_setpoint(setpoint: dict, wet: bool) -> None:
+    """A raw setpoint holds celsius, fahrenheit or both, and each must be under the cap."""
+    top_c, top_f = (WET_MAX_C, WET_MAX_F) if wet else (MAX_C, MAX_F)
+    for value, top in ((setpoint.get("celsius"), top_c), (setpoint.get("fahrenheit"), top_f)):
+        if not isinstance(value, (int, float)):
+            continue
+        if not math.isfinite(value):
+            raise CookError("A stage's temperature must be a real number.")
+        if value > top:
+            raise CookError(f"The oven cannot go above {top_f} F ({top_c:g} C) in this mode.")
+
+
 def _check_stages(stages: list[dict]) -> None:
-    """Raw stages are sent as written, but never above the oven's cap."""
+    """Raw stages are sent as written, but never above the cap or with the fan off."""
     if not stages or not all(isinstance(stage, dict) for stage in stages):
         raise CookError("A custom cook needs at least one stage.")
     try:
         for stage in stages:
-            bulbs = stage.get("do", {}).get("temperatureBulbs", {})
-            for bulb in ("dry", "wet"):
-                celsius = bulbs.get(bulb, {}).get("setpoint", {}).get("celsius")
-                if isinstance(celsius, (int, float)) and celsius > MAX_C:
-                    raise CookError(f"The oven cannot go above {MAX_F} F ({MAX_C:g} C).")
+            do = stage.get("do", {})
+            bulbs = do.get("temperatureBulbs", {})
+            _check_setpoint(bulbs.get("dry", {}).get("setpoint", {}), False)
+            _check_setpoint(bulbs.get("wet", {}).get("setpoint", {}), bulbs.get("mode") == "wet")
+            speed = do.get("fan", {}).get("speed")
+            if isinstance(speed, (int, float)) and speed < 1:
+                raise CookError(FAN_OFF_REFUSED)
     except AttributeError:
         raise CookError("A custom cook's stages are not in the oven's format.") from None
 
@@ -633,6 +650,9 @@ class OvenRuntime:
     async def set_fan(self, speed: float) -> None:
         if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not 0 <= speed <= 100:
             raise ServiceValidationError("Fan speed must be 0 to 100.")
+        # A saved cook counts even with idle reports: idle can lag a start.
+        if int(speed) == 0 and (self._cook_id is not None or not self._fresh_idle()):
+            raise ServiceValidationError(FAN_OFF_REFUSED)
         await self._direct("CMD_APO_SET_FAN", {"speed": int(speed)})
 
     async def set_display_unit(self, unit: str) -> None:

@@ -78,7 +78,7 @@ start_cook:
       default: 100
       selector:
         number:
-          min: 0
+          min: 1
           max: 100
           step: 1
           unit_of_measurement: "%"
@@ -272,7 +272,7 @@ update_cook:
       required: false
       selector:
         number:
-          min: 0
+          min: 1
           max: 100
           step: 1
           unit_of_measurement: "%"

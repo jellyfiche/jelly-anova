@@ -571,27 +571,36 @@ class OvenRuntime:
             _check_stages(stages)
         cook = self._running_cook()
         ours = self._cook_id is not None and cook.cook_id == self._cook_id
-        sent = with_end_stage(stages) if ours else stages
+        with plain_errors():
+            sent = with_end_stage(stages) if ours else stages
         await self._direct("CMD_APO_UPDATE_COOK_STAGES", {"stages": sent})
         if ours:
-            self._move_stop_time_for_stages(sent)
+            self._move_stop_time_for_stages(cook, sent)
 
-    def _move_stop_time_for_stages(self, stages: list[dict]) -> None:
-        """New stages for our cook: the stop time covers all their timers, with the usual margins.
+    def _move_stop_time_for_stages(self, cook: CookInfo, stages: list[dict]) -> None:
+        """New stages for our cook: the stop time covers the timers still to run, with the usual margins.
 
+        Stages before the active one are done, and the running timer's elapsed time is taken off,
+        as _move_stop_time does, so an update with unchanged timers leaves the stop where it was.
         Not moved: a cook's own maximum, stages with no timer (the default limit never extends),
         and a stop already due.
         """
         now = dt_util.utcnow()
+        first = cook.stage_index or 0
         seconds = sum(
-            stage["do"]["timer"].get("initial", 0)
-            for stage in stages
+            stage["do"]["timer"]["initial"]
+            for stage in stages[first:]
             if stage.get("title") != END_STAGE_TITLE
             and isinstance(_dig(stage, "do", "timer", "initial"), (int, float))
         )
         if self._max_minutes is not None or not seconds or self._stop_at is None or self._stop_at <= now:
             return
-        margin = TIMER_MARGIN_MINUTES + PREHEAT_ALLOWANCE_MINUTES
+        margin = TIMER_MARGIN_MINUTES
+        if cook.timer_mode == "running":
+            if cook.timer_started is not None:
+                seconds = max(0, seconds - (now - cook.timer_started).total_seconds())
+        else:
+            margin += PREHEAT_ALLOWANCE_MINUTES
         self._stop_at = now + timedelta(seconds=seconds, minutes=margin)
         self._save()
 

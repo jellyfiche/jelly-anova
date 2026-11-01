@@ -159,6 +159,8 @@ def with_end_stage(stages: list[dict]) -> list[dict]:
     end stage, as an untimed cook has none (its maximum time stops it).
     """
     kept = [copy.deepcopy(stage) for stage in stages if stage.get("title") != END_STAGE_TITLE]
+    if not kept:
+        raise CookError("Give at least one stage besides the hidden end stage, which is added for you.")
     if not any(isinstance(stage.get("do"), dict) and "timer" in stage["do"] for stage in kept):
         return kept
     for stage in kept:

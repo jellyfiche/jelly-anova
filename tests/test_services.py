@@ -392,6 +392,29 @@ async def test_update_stages_moves_the_stop_time(oven):
     assert runtime._cook_id is not None
 
 
+async def test_update_stages_only_end_stages_is_a_plain_error(oven):
+    payload = await started(oven)
+    with pytest.raises(ServiceValidationError, match="at least one"):
+        await oven.call("update_stages", {"config": json.dumps([payload["stages"][1]])})
+    assert oven.commands("CMD_APO_UPDATE_COOK_STAGES") == []
+
+
+async def test_update_stages_unchanged_timers_leave_the_stop_time(oven):
+    from datetime import timedelta
+
+    payload = await started(oven)
+    runtime = oven.runtime
+    now = dt_util.utcnow()
+    elapsed = timedelta(minutes=10)
+    oven.feed(report("cook", cook_id=payload["cookId"], stages=payload["stages"], timer="running", timer_started=now - elapsed))
+    before = runtime._stop_at
+    same = [payload["stages"][0]]
+    for _ in range(3):  # repeated updates must not push the stop later
+        await oven.call("update_stages", {"config": json.dumps(same)})
+    # the running timer has had 10 minutes, so the stop is 10 minutes earlier than a fresh start's
+    assert abs((runtime._stop_at - (before - elapsed)).total_seconds()) < 5
+
+
 async def test_update_stages_leaves_a_own_maximum_standing(oven):
     await started(oven, max_minutes=45)
     runtime = oven.runtime

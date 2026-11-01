@@ -3,6 +3,7 @@
 import asyncio
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -11,6 +12,7 @@ from .connection import OvenConnection
 from .runtime import OvenRuntime
 from .state import OvenState
 
+PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
 UNLOAD_WAIT = 10  # seconds unload waits for the connection to finish
 
 
@@ -44,12 +46,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass, connection.run(), "jelly_anova connection"
     )
     entry.runtime_data = runtime
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Close the connection and wait for it. Cancelling run() alone leaves the reader alive."""
     runtime: OvenRuntime = entry.runtime_data
+    if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        return False
     await runtime.connection.close()
     if runtime.run_task is not None:
         _, pending = await asyncio.wait([runtime.run_task], timeout=UNLOAD_WAIT)

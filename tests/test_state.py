@@ -299,3 +299,29 @@ def test_timer_started_read_from_the_report():
     payload["state"]["cook"]["activeStageIndex"] = 0
     cook = parse_state(payload, None).cook
     assert cook.timer_started == datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
+
+
+def test_fault_details_are_kept():
+    payload = load("idle.json")
+    payload["state"]["nodes"]["heatingElements"]["top"]["failed"] = True
+    payload["state"]["nodes"]["cavityLamp"]["failed"] = False
+    payload["state"]["nodes"]["steamGenerators"]["boiler"]["numberOfOverCurrentInletPump"] = 3
+    s = parse_state(payload, None)
+    assert s.failed == {
+        "top": True,
+        "bottom": False,
+        "rear": False,
+        "boiler": False,
+        "evaporator": False,
+        "fan": False,
+    }
+    assert s.lamp_failed is False
+    assert s.boiler_pump_faults == 3
+    assert s.boiler_valve_faults == 0
+
+
+def test_fault_details_missing_stay_none():
+    s = parse_state({}, None)
+    assert s.failed == {}
+    assert s.lamp_failed is None
+    assert s.boiler_pump_faults is None

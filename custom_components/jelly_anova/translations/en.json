@@ -69,5 +69,239 @@
       "title": "The oven may not have stopped",
       "description": "Home Assistant tried to stop the oven at the end of a cook and could not confirm that it stopped. The oven may still be heating, so please check it now, and press Stop on the oven if it is."
     }
+  },
+  "entity": {
+    "sensor": {
+      "mode": {
+        "name": "Mode"
+      },
+      "active_stage": {
+        "name": "Active stage"
+      },
+      "stages_count": {
+        "name": "Stage count"
+      },
+      "cook_time": {
+        "name": "Cook time"
+      },
+      "timer": {
+        "name": "Timer"
+      },
+      "timer_initial": {
+        "name": "Timer initial"
+      },
+      "timer_mode": {
+        "name": "Timer mode"
+      },
+      "cook_origin": {
+        "name": "Cook origin"
+      },
+      "temperature": {
+        "name": "Temperature"
+      },
+      "wet_temperature": {
+        "name": "Wet temperature"
+      },
+      "top_temperature": {
+        "name": "Top temperature"
+      },
+      "bottom_temperature": {
+        "name": "Bottom temperature"
+      },
+      "target_temperature": {
+        "name": "Target temperature"
+      },
+      "temperature_probe": {
+        "name": "Probe"
+      },
+      "target_temperature_probe": {
+        "name": "Target probe"
+      },
+      "steam_generator_mode": {
+        "name": "Steam mode"
+      },
+      "relative_humidity": {
+        "name": "Humidity"
+      },
+      "target_humidity": {
+        "name": "Target humidity"
+      },
+      "steam_percentage": {
+        "name": "Steam percentage"
+      },
+      "target_steam_percentage": {
+        "name": "Target steam percentage"
+      },
+      "boiler_watts": {
+        "name": "Boiler watts"
+      },
+      "evaporator_watts": {
+        "name": "Evaporator watts"
+      },
+      "boiler_temperature": {
+        "name": "Boiler temperature"
+      },
+      "evaporator_temperature": {
+        "name": "Evaporator temperature"
+      },
+      "top_watts": {
+        "name": "Top watts"
+      },
+      "bottom_watts": {
+        "name": "Bottom watts"
+      },
+      "rear_watts": {
+        "name": "Rear watts"
+      },
+      "fan_speed": {
+        "name": "Fan speed"
+      },
+      "vent_state": {
+        "name": "Vent"
+      },
+      "top_element_hours": {
+        "name": "Top element hours"
+      },
+      "bottom_element_hours": {
+        "name": "Bottom element hours"
+      },
+      "rear_element_hours": {
+        "name": "Rear element hours"
+      },
+      "boiler_hours": {
+        "name": "Boiler hours"
+      },
+      "evaporator_hours": {
+        "name": "Evaporator hours"
+      },
+      "firmware": {
+        "name": "Firmware"
+      },
+      "firmware_updated": {
+        "name": "Firmware updated"
+      },
+      "total_cook_hours": {
+        "name": "Cooking hours"
+      },
+      "exhaust_fan_speed": {
+        "name": "Exhaust fan speed"
+      },
+      "led_fan_speed": {
+        "name": "LED fan speed"
+      },
+      "power_board_fan": {
+        "name": "Power board fan"
+      },
+      "display_fan_speed": {
+        "name": "Display fan speed"
+      },
+      "display_board_temperature": {
+        "name": "Display board temperature"
+      },
+      "internal_line_faults": {
+        "name": "Internal power line faults"
+      },
+      "boiler_pump_faults": {
+        "name": "Boiler pump faults"
+      },
+      "boiler_valve_faults": {
+        "name": "Boiler valve faults"
+      },
+      "hardware_version": {
+        "name": "Hardware version"
+      },
+      "mains_voltage": {
+        "name": "Mains voltage"
+      },
+      "mains_frequency": {
+        "name": "Mains frequency"
+      },
+      "last_disconnected": {
+        "name": "Last disconnected"
+      },
+      "door_light_preference": {
+        "name": "Door light preference"
+      },
+      "food_category": {
+        "name": "Food category"
+      },
+      "food_confidence": {
+        "name": "Food confidence"
+      }
+    },
+    "binary_sensor": {
+      "cooking": {
+        "name": "Cooking"
+      },
+      "door_closed": {
+        "name": "Door closed"
+      },
+      "probe_connected": {
+        "name": "Probe connected"
+      },
+      "vent_closed": {
+        "name": "Vent closed"
+      },
+      "water_low": {
+        "name": "Water low"
+      },
+      "water_tank_empty": {
+        "name": "Water tank empty"
+      },
+      "water_tank_removed": {
+        "name": "Water tank removed"
+      },
+      "waste_tank_full": {
+        "name": "Waste tank full"
+      },
+      "waste_tank_removed": {
+        "name": "Waste tank removed"
+      },
+      "lamp_on": {
+        "name": "Cavity lamp"
+      },
+      "sous_vide": {
+        "name": "Sous vide"
+      },
+      "oven_empty": {
+        "name": "Oven empty"
+      },
+      "online": {
+        "name": "Online"
+      },
+      "descale_needed": {
+        "name": "Descale needed"
+      },
+      "any_failed": {
+        "name": "Any part failed"
+      },
+      "cavity_overheated": {
+        "name": "Overheated"
+      },
+      "triacs_failed": {
+        "name": "Power switches failed"
+      },
+      "lamp_failed": {
+        "name": "Lamp failed"
+      },
+      "top_element_failed": {
+        "name": "Top element failed"
+      },
+      "bottom_element_failed": {
+        "name": "Bottom element failed"
+      },
+      "rear_element_failed": {
+        "name": "Rear element failed"
+      },
+      "boiler_failed": {
+        "name": "Boiler failed"
+      },
+      "evaporator_failed": {
+        "name": "Evaporator failed"
+      },
+      "fan_failed": {
+        "name": "Fan failed"
+      }
+    }
   }
 }

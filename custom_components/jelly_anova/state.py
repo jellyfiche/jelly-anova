@@ -92,6 +92,10 @@ class OvenState:
     mains_hertz: float | None = None
     last_disconnected: datetime | None = None
     food: list[dict] = field(default_factory=list)
+    failed: dict[str, bool] = field(default_factory=dict)
+    lamp_failed: bool | None = None
+    boiler_pump_faults: int | None = None
+    boiler_valve_faults: int | None = None
     cook: CookInfo | None = None
     # When dry_c was last a real reading (not a held-back zero).
     dry_good_at: datetime | None = None
@@ -145,6 +149,21 @@ def _any_failed(nodes: dict) -> bool | None:
     if not known:
         return None
     return any(known)
+
+
+def _failed(nodes: dict) -> dict[str, bool]:
+    found: dict[str, bool] = {}
+    for name in _ELEMENTS:
+        found[name] = _flag(_get(nodes, "heatingElements", name, "failed"))
+    for name in _STEAM:
+        found[name] = _flag(_get(nodes, "steamGenerators", name, "failed"))
+    found["fan"] = _flag(_get(nodes, "fan", "failed"))
+    return {k: v for k, v in found.items() if v is not None}
+
+
+def _count(value: Any) -> int | None:
+    number = _num(value)
+    return int(number) if number is not None else None
 
 
 def _fan_speeds(nodes: dict) -> dict[str, str]:
@@ -314,6 +333,10 @@ def parse_state(payload: dict, previous: OvenState | None) -> OvenState:
         mains_hertz=_num(info.get("powerHertz")),
         last_disconnected=_time(info.get("lastDisconnectedTimestamp")),
         food=food,
+        failed=_failed(nodes),
+        lamp_failed=_flag(_get(nodes, "cavityLamp", "failed")),
+        boiler_pump_faults=_count(_get(nodes, "steamGenerators", "boiler", "numberOfOverCurrentInletPump")),
+        boiler_valve_faults=_count(_get(nodes, "steamGenerators", "boiler", "numberOfOverCurrentOutletValveDescale")),
         cook=_cook(report.get("cook"), nodes),
         dry_good_at=dry_good_at,
     )

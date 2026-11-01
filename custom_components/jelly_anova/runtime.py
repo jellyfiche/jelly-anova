@@ -36,8 +36,16 @@ from .const import (
     MAX_F,
     STALE_SECONDS,
 )
-from .cook import CookError, CookRequest, build_start, limit_minutes, updated_stage
-from .state import OvenState, is_newer
+from .cook import (
+    PREHEAT_ALLOWANCE_MINUTES,
+    TIMER_MARGIN_MINUTES,
+    CookError,
+    CookRequest,
+    build_start,
+    limit_minutes,
+    updated_stage,
+)
+from .state import CookInfo, OvenState, is_newer
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +53,7 @@ STORE_VERSION = 1
 CHECK_SECONDS = 5  # how often the saved stop time and report freshness are checked
 HOURS_SAVE_SECONDS = 300  # the running total is written this often, not on every report
 STOP_RETRY_SECONDS = 60  # an automatic stop not yet shown to have worked goes out again after this
+MAX_STOP_ROUNDS = 3  # stops the oven answered with no sign it worked, before a person is told
 RESTART_WAIT = 30  # after a restart, how long a due stop waits for a first report
 REPORT_WAIT = 20  # a start waits this long for a fresh report (idle reports can be 15 s apart)
 IDLE_WAIT = 30  # a start during a cook waits this long for the oven to report idle
@@ -54,6 +63,15 @@ TIMER_ENDED = ("idle", "completed")
 
 ISSUE_LOGIN = "login_failed"
 ISSUE_STOP = "stop_failed"
+
+
+def _dig(obj: Any, *path: str) -> Any:
+    """Walk nested dicts; None as soon as anything is missing or is not a dict."""
+    for key in path:
+        if not isinstance(obj, dict):
+            return None
+        obj = obj.get(key)
+    return obj
 
 
 def _check_max_minutes(value: Any) -> None:
@@ -111,11 +129,15 @@ class OvenRuntime:
         self._cook_id: str | None = None
         self._stop_at: datetime | None = None
         self._cooker_id: str | None = None
+        self._max_minutes: int | None = None  # its own maximum: stands, whatever the timer does
         self._timer_seen = False  # its timer has been seen running
+        self._last_start: datetime | None = None  # when a start last went out
 
         # Sending the stop.
         self._stop_task: asyncio.Task | None = None
         self._next_stop_try: datetime | None = None
+        self._stop_sent_at: datetime | None = None  # for our cook; an idle report after it ends it
+        self._stop_rounds = 0  # automatic stops answered ok with the cook not seen to end
         self._hold_until: datetime | None = None
         self._stop_presses = 0
         self._start_lock = asyncio.Lock()
@@ -163,6 +185,7 @@ class OvenRuntime:
         return {
             "cook_id": self._cook_id,
             "stop_at": self._stop_at.isoformat() if self._stop_at else None,
+            "max_minutes": self._max_minutes,
             "total_cook_hours": self._total_hours,
             # Kept so the backup stop works after a restart with the login gone.
             "cooker_id": self.connection.cooker_id or self._cooker_id,
@@ -188,6 +211,8 @@ class OvenRuntime:
             parsed = dt_util.parse_datetime(stop_at) if isinstance(stop_at, str) else None
             self._cook_id = cook_id
             self._stop_at = parsed or now
+            maximum = data.get("max_minutes")
+            self._max_minutes = maximum if isinstance(maximum, int) else None
             self._active_id = cook_id
             # Restored before the connection runs. Sent now, a due stop could end a cook that
             # was started since, so it first gets a chance to see one report.
@@ -242,15 +267,18 @@ class OvenRuntime:
     @callback
     def on_state(self, state: OvenState) -> None:
         """Handle a report. The connection only passes on fresh ones."""
+        if not self._fresh(self.state):
+            self._stop_rounds = 0  # reports are back: what they show is new, so stops may go again
         self.state = state
+        # The stop checks come first, so nothing below can get in their way.
+        self._track_cook(state)
+        self._check_timer_end(state)
+        self._check_stop_due()
         if self._login_issue:
             self._login_issue = False
             ir.async_delete_issue(self._hass, DOMAIN, ISSUE_LOGIN)
         self._count_hours(state)
-        self._track_cook(state)
         self._check_target(state)
-        self._check_timer_end(state)
-        self._check_stop_due()
         for wanted, future in list(self._waiters):
             if not future.done() and wanted(state):
                 future.set_result(state)
@@ -305,13 +333,19 @@ class OvenRuntime:
         else:
             return  # some cook is on, which one is not known
         ended, self._active_id = self._active_id, current
-        if ended is None or ended == current:
-            return
-        # Only a cook seen running can end. Until ours has shown up an idle report means nothing,
-        # because it can lag a start, so the saved stop time stays.
-        if ended == self._cook_id:
+        if ended is not None and ended != current:
+            # Only a cook seen running can end. Until ours has shown up an idle report means
+            # nothing, because it can lag a start, so the saved stop time stays.
+            if ended == self._cook_id:
+                self._forget_cook()
+            self._hass.bus.async_fire(EVENT_COOK_FINISHED, {"cook_id": ended})
+        # The other way a cook is known to be gone: idle, reported after our stop.
+        if (
+            current is None
+            and self._stop_sent_at is not None
+            and is_newer(state, self._stop_sent_at)
+        ):
             self._forget_cook()
-        self._hass.bus.async_fire(EVENT_COOK_FINISHED, {"cook_id": ended})
 
     def _check_target(self, state: OvenState) -> None:
         after_restart, self._after_restart = self._after_restart, False
@@ -332,11 +366,13 @@ class OvenRuntime:
     @staticmethod
     def _at_setpoint(state: OvenState) -> bool:
         # From the stage, not the report's setpoint: that one stays from the cook before.
-        bulbs = state.cook.active_stage.get("do", {}).get("temperatureBulbs", {})
-        bulb = bulbs.get("mode")
-        target = bulbs.get(bulb, {}).get("setpoint", {}).get("celsius")
-        current = {"dry": state.dry_c, "wet": state.wet_c}.get(bulb)
-        return target is not None and current is not None and current >= target
+        bulbs = _dig(state.cook.active_stage, "do", "temperatureBulbs")
+        bulb = _dig(bulbs, "mode")
+        target = _dig(bulbs, bulb, "setpoint", "celsius")
+        current = state.dry_c if bulb == "dry" else state.wet_c if bulb == "wet" else None
+        if not isinstance(target, (int, float)) or current is None:
+            return False
+        return current >= target
 
     def _check_timer_end(self, state: OvenState) -> None:
         """For our cook only: has it reached its end?"""
@@ -359,11 +395,24 @@ class OvenRuntime:
     def _forget_cook(self) -> None:
         self._cook_id = None
         self._stop_at = None
+        self._max_minutes = None
         self._timer_seen = False
         self._next_stop_try = None
+        self._stop_sent_at = None
+        self._stop_rounds = 0
         self._hold_until = None
         ir.async_delete_issue(self._hass, DOMAIN, ISSUE_STOP)
         self._save()
+
+    def _raise_stop_issue(self) -> None:
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            ISSUE_STOP,
+            is_fixable=False,
+            severity=ir.IssueSeverity.CRITICAL,
+            translation_key=ISSUE_STOP,
+        )
 
     def _check_stop_due(self) -> None:
         if self._closed or self._stop_at is None:
@@ -378,6 +427,15 @@ class OvenRuntime:
         if self._hold_until is not None and now < self._hold_until and not self._fresh(self.state):
             return
         self._next_stop_try = now + timedelta(seconds=STOP_RETRY_SECONDS)
+        if self._stop_rounds >= MAX_STOP_ROUNDS:
+            # Answered ok, and still no sign it worked. More of the same would go on for ever and
+            # could hit a later cook, so a person is told. The stop time stays saved.
+            if self._other_cook_running(self._cook_id):
+                self._forget_cook()
+            else:
+                _LOGGER.warning("The oven answered the stop but was not seen to stop")
+                self._raise_stop_issue()
+            return
         self._stop_task = self._entry.async_create_background_task(
             self._hass, self._automatic_stop(self._cook_id), "jelly_anova automatic stop"
         )
@@ -387,29 +445,21 @@ class OvenRuntime:
             if self._cook_id == cook_id:
                 self._forget_cook()
             return
+        self._note_stop(cook_id)
         try:
             await self._deliver_stop()
-        except HomeAssistantError:
+        except Exception as err:  # noqa: BLE001 - whatever went wrong, a person must hear of it
             # Stays saved, so it goes out again. The oven may be heating: this one must be seen.
-            _LOGGER.warning("The oven could not be told to stop; trying again")
-            ir.async_create_issue(
-                self._hass,
-                DOMAIN,
-                ISSUE_STOP,
-                is_fixable=False,
-                severity=ir.IssueSeverity.CRITICAL,
-                translation_key=ISSUE_STOP,
-            )
+            _LOGGER.warning("The oven could not be told to stop, trying again: %s", type(err).__name__)
+            self._raise_stop_issue()
             return
-        self._stop_delivered(cook_id)
-
-    def _stop_delivered(self, cook_id: str | None) -> None:
         ir.async_delete_issue(self._hass, DOMAIN, ISSUE_STOP)
-        # With a cook still showing, the end is seen in a report, or the stop goes out again.
-        # With nothing showing it, the oven's answer is the last word.
-        if cook_id == self._cook_id and cook_id is not None:
-            if not (self._fresh(self.state) and self._cook_reported(self.state)):
-                self._forget_cook()
+        self._stop_rounds += 1  # the limit stays until a report shows the cook gone
+
+    def _note_stop(self, cook_id: str | None) -> None:
+        """Called before a stop goes out, so a cook started meanwhile is not mistaken for this one."""
+        if cook_id is not None and cook_id == self._cook_id:
+            self._stop_sent_at = dt_util.utcnow()
 
     async def _deliver_stop(self) -> None:
         """Get a stop to the oven, or raise a plain error. State never decides whether it is sent."""
@@ -419,7 +469,7 @@ class OvenRuntime:
             except OvenRefused:
                 if self._fresh_idle():  # nothing to stop
                     return
-            except OvenError as err:
+            except Exception as err:  # noqa: BLE001 - nothing may keep a stop from the backup
                 _LOGGER.debug("Stop not delivered: %s", type(err).__name__)
             else:
                 return
@@ -431,7 +481,7 @@ class OvenRuntime:
             except OvenRefused:
                 if self._fresh_idle():
                     return
-            except OvenError as err:
+            except Exception as err:  # noqa: BLE001 - this must end in the plain error below
                 _LOGGER.debug("Backup stop not delivered: %s", type(err).__name__)
             else:
                 return
@@ -444,15 +494,15 @@ class OvenRuntime:
         if cook_id is not None and self._other_cook_running(cook_id):
             return
         self._stop_presses += 1
+        self._note_stop(cook_id or self._cook_id)
         await self._deliver_stop()
-        self._stop_delivered(cook_id or self._cook_id)
 
     async def start(self, req: CookRequest) -> str:
         """Start a cook, ending any cook running first. Returns its cook id."""
         if req.max_minutes is not None:
             _check_max_minutes(req.max_minutes)
         payload, cook_id = build_start(req, self._cooker())
-        return await self._start(payload, cook_id, limit_minutes(req))
+        return await self._start(payload, cook_id, limit_minutes(req), req.max_minutes)
 
     async def start_custom(self, stages: list[dict], max_minutes: int | None) -> str:
         """Start a cook from raw stages. Their timers are not relied on: the limit ends it."""
@@ -460,7 +510,8 @@ class OvenRuntime:
             _check_max_minutes(max_minutes)
         cook_id = f"ios-{uuid.uuid4()}"
         payload = _custom_payload(stages, cook_id, self._cooker())
-        return await self._start(payload, cook_id, int(max_minutes or DEFAULT_MAX_MINUTES))
+        limit = int(max_minutes or DEFAULT_MAX_MINUTES)
+        return await self._start(payload, cook_id, limit, max_minutes)
 
     async def update(self, changes: dict) -> None:
         """Change the active stage of the running cook."""
@@ -476,19 +527,53 @@ class OvenRuntime:
             raise HomeAssistantError("The oven refused the change.") from None
         except OvenError:
             raise HomeAssistantError("The oven did not confirm the change.") from None
+        if ("timer_seconds" in changes or changes.get("start_timer")) and state.cook.cook_id == self._cook_id:
+            self._move_stop_time(state.cook, stage, bool(changes.get("start_timer")))
+
+    def _move_stop_time(self, cook: CookInfo, stage: dict, releasing: bool) -> None:
+        """Our cook's timer changed, so its stop time follows, as if the cook had started so.
+
+        Not moved: a cook's own maximum, a stage with no timer (the default limit never extends),
+        a stop already due, and a custom cook of several stages, which has more to run.
+        """
+        now = dt_util.utcnow()
+        seconds = _dig(stage, "do", "timer", "initial")
+        if (
+            self._max_minutes is not None
+            or cook.stage_count != 1
+            or not isinstance(seconds, (int, float))
+            or self._stop_at is None
+            or self._stop_at <= now
+        ):
+            return
+        margin = TIMER_MARGIN_MINUTES
+        if cook.timer_mode == "running":
+            if cook.timer_started is not None:
+                seconds = max(0, seconds - (now - cook.timer_started).total_seconds())
+        elif not releasing:
+            margin += PREHEAT_ALLOWANCE_MINUTES
+        self._stop_at = now + timedelta(seconds=seconds, minutes=margin)
+        self._save()
 
     def _cooker(self) -> str:
-        cooker_id = self.connection.cooker_id
+        cooker_id = self.connection.cooker_id or self._cooker_id
         if cooker_id is None:
             raise HomeAssistantError("The oven is not connected yet. Try again in a minute.")
         return cooker_id
 
-    async def _start(self, payload: dict, cook_id: str, minutes: int) -> str:
+    async def _start(self, payload: dict, cook_id: str, minutes: int, maximum: int | None) -> str:
         stop_at = dt_util.utcnow() + timedelta(minutes=minutes)
         presses = self._stop_presses
         async with self._start_lock:
             if self._stop_task is not None and not self._stop_task.done():
                 await asyncio.wait([self._stop_task])
+            if not self._connected:
+                try:
+                    await self.connection.ensure_open()
+                except OvenError:
+                    raise HomeAssistantError(
+                        "The oven's cloud cannot be reached, so the cook was not started."
+                    ) from None
             await self._make_idle()
             if presses != self._stop_presses:
                 raise HomeAssistantError("Stop was pressed, so the new cook was not started.")
@@ -496,9 +581,13 @@ class OvenRuntime:
             # arrived. A cook must not be able to run without its limit.
             self._cook_id = cook_id
             self._stop_at = stop_at
+            self._max_minutes = int(maximum) if maximum is not None else None
             self._timer_seen = False
             self._next_stop_try = None
+            self._stop_sent_at = None
+            self._stop_rounds = 0
             self._hold_until = None
+            self._last_start = dt_util.utcnow()
             await self._store.async_save(self._data())
             try:
                 await self.connection.send("CMD_APO_START", payload)
@@ -517,13 +606,22 @@ class OvenRuntime:
         """Return once a fresh report shows the oven idle, stopping a cook if there is one.
 
         Needed because the oven answers ok to a start during a cook and ignores it. With no
-        fresh report nothing is known, so nothing is stopped and nothing may start.
+        fresh report nothing is known, so nothing is stopped and nothing may start. A saved cook
+        is taken to be running whatever the reports say: idle can lag a start, and starting over
+        it would lose the only stop time it has.
         """
-        state = await self._wait_for(self._fresh, REPORT_WAIT)
-        if state is None:
-            raise HomeAssistantError("The oven is not reporting, so a cook cannot be started safely.")
-        if state.mode == "idle":
-            return
+        if self._cook_id is None:
+            since = self._last_start
+            state = await self._wait_for(
+                lambda report: self._fresh(report) and (since is None or is_newer(report, since)),
+                REPORT_WAIT,
+            )
+            if state is None:
+                raise HomeAssistantError(
+                    "The oven is not reporting, so a cook cannot be started safely."
+                )
+            if state.mode == "idle":
+                return
         stopped_at = dt_util.utcnow()
         await self._deliver_stop()
         idle = await self._wait_for(

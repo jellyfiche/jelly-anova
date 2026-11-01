@@ -39,6 +39,7 @@ class CookInfo:
     sous_vide: bool
     rack: int | None
     in_end_stage: bool
+    timer_started: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -200,6 +201,7 @@ def _cook(raw: Any, nodes: dict) -> CookInfo | None:
         sous_vide=sous_vide,
         rack=rack if isinstance(rack, int) and not isinstance(rack, bool) else None,
         in_end_stage=active.get("title") == END_STAGE_TITLE if active else False,
+        timer_started=_time(_get(nodes, "timer", "startedAtTimestamp")) if has_timer else None,
     )
 
 

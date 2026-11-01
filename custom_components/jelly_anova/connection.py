@@ -308,6 +308,30 @@ class OvenConnection:
 
     # --- sending -------------------------------------------------------------
 
+    async def _reopen(self) -> None:
+        """If the connection is down, try once to open it. Raises OvenOffline if it stays down."""
+        if self._auth_reported:
+            raise OvenOffline("Login refused")
+        if self._ws is None or self._ws.closed:
+            try:
+                await self._open()
+            except _AUTH_ERRORS:
+                self._auth_failed()
+                raise OvenOffline("Login refused") from None
+            except OvenError:
+                raise
+            except _RETRY_ERRORS as err:
+                _LOGGER.debug("Reconnect for a command failed: %s", type(err).__name__)
+                raise OvenOffline("Cannot reach the oven's cloud") from None
+
+    async def ensure_open(self, timeout: float = 10) -> None:
+        """Try once to open a connection that is down, for an action that needs reports."""
+        try:
+            async with asyncio.timeout(timeout):
+                await self._reopen()
+        except TimeoutError:
+            raise OvenOffline("Cannot reach the oven's cloud") from None
+
     async def send(self, command: str, payload: dict | None, timeout: float = 10) -> dict:
         """Send a command and return the oven's reply payload.
 
@@ -318,19 +342,7 @@ class OvenConnection:
         written = False
         try:
             async with asyncio.timeout(timeout):
-                if self._auth_reported:
-                    raise OvenOffline("Login refused")
-                if self._ws is None or self._ws.closed:
-                    try:
-                        await self._open()
-                    except _AUTH_ERRORS:
-                        self._auth_failed()
-                        raise OvenOffline("Login refused") from None
-                    except OvenError:
-                        raise
-                    except _RETRY_ERRORS as err:
-                        _LOGGER.debug("Reconnect for a command failed: %s", type(err).__name__)
-                        raise OvenOffline("Cannot reach the oven's cloud") from None
+                await self._reopen()
                 if self.cooker_id is None:
                     await self._cooker_known.wait()
                 ws = self._ws

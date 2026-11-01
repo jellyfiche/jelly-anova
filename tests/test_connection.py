@@ -94,6 +94,24 @@ class FakeAuth:
         return f"{SECRET}-{self.n}"
 
 
+async def test_ensure_open_opens_once_and_stays_quiet_when_open():
+    ws = FakeWS()
+    session = FakeSession(ws)
+    conn = make(session)
+    await conn.ensure_open()
+    await conn.ensure_open()
+    assert len(session.calls) == 1
+    await conn.close()
+
+
+async def test_ensure_open_down_is_offline_after_one_try():
+    session = FakeSession(CannotConnect("x"))
+    conn = make(session)
+    with pytest.raises(OvenOffline):
+        await conn.ensure_open()
+    assert len(session.calls) == 1
+
+
 async def until(check, tries=500):
     for _ in range(tries):
         if check():

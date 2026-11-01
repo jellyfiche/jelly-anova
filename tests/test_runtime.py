@@ -29,7 +29,7 @@ ONE_STAGE = TIMED[:1]
 NO_TIMER = build_start(CookRequest(temperature_c=100), "x")[0]["stages"]
 
 
-def report(mode="cook", cook_id=None, stages=None, index=0, stage_mode="running", timer=None, dry=None, wet=None, at=None):
+def report(mode="cook", cook_id=None, stages=None, index=0, stage_mode="running", timer=None, dry=None, wet=None, at=None, timer_started=None):
     """An oven report; idle reports carry no cook section, as on the real oven."""
     nodes = {
         "temperatureBulbs": {
@@ -40,6 +40,8 @@ def report(mode="cook", cook_id=None, stages=None, index=0, stage_mode="running"
     }
     if timer is not None:
         nodes["timer"] = {"mode": timer}
+        if timer_started is not None:
+            nodes["timer"]["startedAtTimestamp"] = timer_started.isoformat()
     raw = {
         "updatedTimestamp": (at or dt_util.utcnow()).isoformat(),
         "state": {"mode": mode},
@@ -64,11 +66,21 @@ class FakeConnection:
         self.sent = []
         self.errors = []
         self.on_send = None
+        self.gate = None  # an asyncio.Event a stop waits on after it is recorded
+        self.opens = 0
+        self.open_error = None
+
+    async def ensure_open(self, timeout=10):
+        self.opens += 1
+        if self.open_error:
+            raise self.open_error
 
     async def send(self, command, payload, timeout=10):
         self.sent.append((command, payload))
         if self.on_send:
             self.on_send(command)
+        if self.gate and command == STOP:
+            await self.gate.wait()
         if self.errors:
             raise self.errors.pop(0)
         return {"status": "ok"}
@@ -318,6 +330,98 @@ async def test_start_custom_refuses_no_stages_and_too_hot(rig):
     assert rig.conn.sent == []
 
 
+async def test_second_start_cannot_lose_the_first_cooks_stop_time(rig, monkeypatch):
+    """Idle lags a start: start, start, then the first cook shows. A stop must still reach it."""
+    monkeypatch.setattr(runtime_module, "IDLE_WAIT", 0.05)
+    rt, first = await started(rig, CookRequest(temperature_f=350, max_minutes=1))
+    rt.on_state(report("idle"))
+    with pytest.raises(HomeAssistantError):
+        await rt.start(CookRequest(temperature_f=300))
+    assert rig.conn.order == [START, STOP]
+    await rig.settle()
+    assert rig.saved["cook_id"] == first
+    assert rig.saved["stop_at"] is not None
+
+
+async def test_second_start_stops_the_first_and_keeps_only_the_second(rig):
+    rt, first = await started(rig)
+
+    def goes_idle(command):
+        if command == STOP:
+            later = dt_util.utcnow() + timedelta(seconds=1)
+            rig.hass.loop.call_soon(rt.on_state, report("idle", at=later))
+
+    rig.conn.on_send = goes_idle
+    second = await rt.start(CookRequest(temperature_f=300))
+    await rig.settle()
+    assert rig.conn.order == [START, STOP, START]
+    assert rig.saved["cook_id"] == second
+
+
+async def test_start_after_a_cleared_cook_needs_a_report_from_after_that_start(rig, monkeypatch):
+    monkeypatch.setattr(runtime_module, "REPORT_WAIT", 0.05)
+    rt = await rig.boot()
+    rt.on_state(report("idle"))
+    rig.conn.errors = [OvenRefused("no")]
+    with pytest.raises(HomeAssistantError):
+        await rt.start(CookRequest(temperature_f=350))
+    rig.conn.sent.clear()
+    rt.on_state(report("idle", at=dt_util.utcnow() - timedelta(seconds=5)))
+    with pytest.raises(HomeAssistantError):
+        await rt.start(CookRequest(temperature_f=350))
+    assert rig.conn.sent == []
+
+
+async def test_two_starts_at_once_take_turns(rig):
+    rt = await rig.boot()
+    rt.on_state(report("idle"))
+
+    def goes_idle(command):
+        if command == STOP:
+            later = dt_util.utcnow() + timedelta(seconds=1)
+            rig.hass.loop.call_soon(rt.on_state, report("idle", at=later))
+
+    rig.conn.on_send = goes_idle
+    one, two = await asyncio.gather(
+        rt.start(CookRequest(temperature_f=350)), rt.start(CookRequest(temperature_f=300))
+    )
+    await rig.settle()
+    assert rig.conn.order == [START, STOP, START]
+    assert rig.saved["cook_id"] == two != one
+
+
+async def test_start_reconnects_once_when_the_socket_is_down(rig):
+    rt = await rig.boot()
+    rt.on_status(False)
+
+    async def comes_back(timeout=10):
+        rig.conn.opens += 1
+        rt.on_status(True)
+        rig.hass.loop.call_soon(rt.on_state, report("idle"))
+
+    rig.conn.ensure_open = comes_back
+    await rt.start(CookRequest(temperature_f=350))
+    assert rig.conn.opens == 1
+    assert rig.conn.order == [START]
+
+
+async def test_start_when_reconnect_fails_is_a_plain_error_at_once(rig):
+    rt = await rig.boot()
+    rt.on_status(False)
+    rig.conn.open_error = OvenOffline("x")
+    with pytest.raises(HomeAssistantError):
+        await rt.start(CookRequest(temperature_f=350))
+    assert rig.conn.opens == 1
+    assert rig.conn.sent == []
+
+
+async def test_start_does_not_reconnect_when_connected(rig):
+    rt = await rig.boot()
+    rt.on_state(report("idle"))
+    await rt.start(CookRequest(temperature_f=350))
+    assert rig.conn.opens == 0
+
+
 # --- the saved stop time ----------------------------------------------------
 
 
@@ -338,11 +442,69 @@ async def test_limit_stop_not_repeated_while_oven_confirms(rig, freezer):
     assert rig.conn.count(STOP) == 1
 
 
-async def test_limit_stop_cleared_when_oven_answers_and_no_reports_come(rig, freezer):
-    await started(rig, CookRequest(temperature_f=350, max_minutes=1))
+async def test_stop_answered_with_no_reports_is_bounded_and_told(rig, freezer):
+    rt, cook_id = await started(rig, CookRequest(temperature_f=350, max_minutes=1))
+    issues = ir.async_get(rig.hass)
+    for _ in range(3):
+        await rig.advance(freezer, 61)
+    assert rig.conn.count(STOP) == 3
+    assert issues.async_get_issue(DOMAIN, "stop_failed") is None
     await rig.advance(freezer, 61)
     await rig.advance(freezer, 300)
-    assert rig.conn.count(STOP) == 1
+    assert rig.conn.count(STOP) == 3
+    assert issues.async_get_issue(DOMAIN, "stop_failed") is not None
+    assert rig.saved["stop_at"] is not None
+
+
+async def test_reports_returning_after_bounded_stops_send_it_again(rig, freezer):
+    rt, cook_id = await started(rig, CookRequest(temperature_f=350, max_minutes=1))
+    for _ in range(4):
+        await rig.advance(freezer, 61)
+    assert rig.conn.count(STOP) == 3
+    rt.on_state(report("cook", cook_id))
+    await rig.advance(freezer, 61)
+    assert rig.conn.count(STOP) == 4
+    rt.on_state(report("idle"))
+    await rig.settle()
+    assert rig.saved["stop_at"] is None
+    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, "stop_failed") is None
+
+
+async def test_oven_that_answers_ok_but_keeps_cooking_is_bounded_and_told(rig, freezer):
+    rt, cook_id = await started(rig, CookRequest(temperature_f=350, max_minutes=1))
+    rt.on_state(report("cook", cook_id))
+    await rig.advance(freezer, 30)
+    for _ in range(40):
+        rt.on_state(report("cook", cook_id))
+        await rig.advance(freezer, 30)
+    assert rig.conn.count(STOP) == 3
+    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, "stop_failed") is not None
+    assert rig.saved["stop_at"] is not None
+    rt.on_state(report("idle"))
+    await rig.settle()
+    assert rig.saved["stop_at"] is None
+    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, "stop_failed") is None
+
+
+async def test_cook_finishing_other_way_after_bounded_stops_is_not_stopped(rig, freezer):
+    rt, cook_id = await started(rig, CookRequest(temperature_f=350, max_minutes=1))
+    for _ in range(3):
+        await rig.advance(freezer, 61)
+    await rig.advance(freezer, 55)
+    rt.on_state(report("cook", OTHER))
+    await rig.advance(freezer, 6)
+    assert rig.conn.count(STOP) == 3
+    assert rig.saved["stop_at"] is None
+
+
+async def test_user_stop_answered_keeps_limit_until_cook_seen_gone(rig, freezer):
+    rt, cook_id = await started(rig)
+    await rt.stop()
+    await rig.settle()
+    assert rig.saved["stop_at"] is not None
+    freezer.tick(timedelta(seconds=1))
+    rt.on_state(report("idle"))
+    await rig.settle()
     assert rig.saved["stop_at"] is None
 
 
@@ -369,6 +531,10 @@ async def test_limit_stop_undelivered_keeps_trying_and_raises_a_problem(rig, fre
     rig.backup_error = None
     await rig.advance(freezer, 61)
     assert ir.async_get(rig.hass).async_get_issue(DOMAIN, "stop_failed") is None
+    assert rig.saved["stop_at"] is not None  # answered, not yet seen
+    freezer.tick(timedelta(seconds=1))
+    rt.on_state(report("idle"))
+    await rig.settle()
     assert rig.saved["stop_at"] is None
 
 
@@ -382,6 +548,77 @@ async def test_stop_problem_goes_when_a_report_shows_the_cook_ended(rig, freezer
     rt.on_state(report("idle"))
     await rig.settle()
     assert ir.async_get(rig.hass).async_get_issue(DOMAIN, "stop_failed") is None
+
+
+async def test_due_stop_stays_silent_after_shutdown(rig, freezer):
+    rt, cook_id = await started(rig, CookRequest(temperature_f=350, max_minutes=1))
+    await rt.shutdown()
+    await rig.advance(freezer, 61)
+    rt.on_state(report("cook", cook_id))
+    await rig.settle()
+    assert rig.conn.count(STOP) == 0
+    assert rig.saved["stop_at"] is not None  # for the next start-up
+
+
+async def test_unexpected_error_still_reaches_backup(rig):
+    rt = await rig.boot()
+    rig.conn.errors = [KeyError("x"), KeyError("x")]
+    await rt.stop()
+    assert len(rig.backups) == 1
+
+
+async def test_unexpected_backup_error_is_still_plain_and_raises_the_problem(rig, freezer):
+    rt, cook_id = await started(rig, CookRequest(temperature_f=350, max_minutes=1))
+    rig.conn.errors = [KeyError("x"), KeyError("x")]
+    rig.backup_error = KeyError("x")
+    await rig.advance(freezer, 61)
+    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, "stop_failed") is not None
+
+
+async def test_unexpected_error_inside_delivery_raises_the_problem(rig, freezer, monkeypatch):
+    rt, cook_id = await started(rig, CookRequest(temperature_f=350, max_minutes=1))
+
+    async def broken():
+        raise KeyError("x")
+
+    monkeypatch.setattr(rt, "_deliver_stop", broken)
+    await rig.advance(freezer, 61)
+    assert ir.async_get(rig.hass).async_get_issue(DOMAIN, "stop_failed") is not None
+
+
+async def test_null_setpoint_cannot_skip_the_stop(rig):
+    stages = [dict(TIMED[0]), dict(TIMED[1], do=dict(TIMED[1]["do"], temperatureBulbs=None))]
+    rt, cook_id = await started(rig, CookRequest(temperature_f=350, minutes=30))
+    rt.on_state(report("cook", cook_id, stages=stages, index=1, timer="running"))
+    await rig.settle()
+    assert rig.conn.count(STOP) == 1
+
+
+@pytest.mark.parametrize("bulbs", [None, {"mode": "dry", "dry": None}, {"mode": "dry", "dry": {"setpoint": None}}, {"mode": None}])
+async def test_null_setpoint_cannot_skip_a_timer_end_or_stop_listeners(rig, bulbs):
+    stage = dict(ONE_STAGE[0], do=dict(ONE_STAGE[0]["do"], temperatureBulbs=bulbs))
+    rt, cook_id = await started(rig)
+    told = []
+    rt.add_listener(lambda: told.append(1))
+    rt.on_state(report("cook", cook_id, stages=[stage], timer="running", dry=50))
+    rt.on_state(report("cook", cook_id, stages=[stage], timer="completed", dry=50))
+    await rig.settle()
+    assert rig.conn.count(STOP) == 1
+    assert len(told) == 2
+
+
+async def test_stop_checks_run_before_anything_that_could_fail(rig, monkeypatch):
+    rt, cook_id = await started(rig, CookRequest(temperature_f=350, minutes=30))
+
+    def broken(state):
+        raise KeyError("x")
+
+    monkeypatch.setattr(rt, "_check_target", broken)
+    monkeypatch.setattr(rt, "_count_hours", broken)
+    with pytest.raises(KeyError):  # the connection logs this and carries on
+        rt.on_state(report("cook", cook_id, stages=TIMED, index=1))
+    await rig.settle()
+    assert rig.conn.count(STOP) == 1
 
 
 async def test_limit_survives_restart(rig, freezer):
@@ -493,10 +730,20 @@ async def test_idle_report_before_cook_is_seen_keeps_limit(rig):
 async def test_cook_that_never_showed_is_cleared_at_its_limit(rig, freezer):
     rt, cook_id = await started(rig, CookRequest(temperature_f=350, max_minutes=1))
     await rig.advance(freezer, 61)
+    freezer.tick(timedelta(seconds=1))
     rt.on_state(report("idle"))
     await rig.advance(freezer, 5)
     assert rig.conn.count(STOP) == 1
     assert rig.saved["stop_at"] is None
+
+
+async def test_idle_report_from_before_the_stop_does_not_clear_a_never_seen_cook(rig, freezer):
+    rt, cook_id = await started(rig, CookRequest(temperature_f=350, max_minutes=1))
+    before = dt_util.utcnow()
+    await rig.advance(freezer, 61)
+    rt.on_state(report("idle", at=before))
+    await rig.settle()
+    assert rig.saved["stop_at"] is not None
 
 
 # --- a timed cook ending ----------------------------------------------------
@@ -605,6 +852,34 @@ async def test_stop_no_id_always_sent_even_when_idle(rig):
     rt.on_state(report("idle"))
     await rt.stop()
     assert rig.conn.sent == [(STOP, None)]
+
+
+async def test_stop_in_flight_leaves_a_cook_started_meanwhile_alone(rig):
+    rt = await rig.boot()
+    rt.on_state(report("idle"))
+    rig.conn.gate = asyncio.Event()
+    stopping = asyncio.ensure_future(rt.stop())
+    await asyncio.sleep(0)
+    cook_id = await rt.start(CookRequest(temperature_f=350))
+    rig.conn.gate.set()
+    await stopping
+    await rig.settle()
+    assert rig.saved["cook_id"] == cook_id
+    assert rig.saved["stop_at"] is not None
+    rt.on_state(report("idle"))  # lagging: this new cook has not shown yet
+    await rig.settle()
+    assert rig.saved["cook_id"] == cook_id
+
+
+async def test_two_stops_at_once_both_go_and_neither_fails(rig):
+    rt, cook_id = await started(rig)
+    rig.conn.gate = asyncio.Event()
+    both = asyncio.gather(rt.stop(), rt.stop(cook_id))
+    await asyncio.sleep(0)
+    rig.conn.gate.set()
+    await both
+    assert rig.conn.count(STOP) == 2
+    assert rig.saved["stop_at"] is not None
 
 
 async def test_stop_no_id_sent_with_no_report_at_all(rig):
@@ -990,6 +1265,104 @@ async def test_update_refused_in_hidden_end_stage(rig):
     with pytest.raises(HomeAssistantError):
         await rt.update({"fan": 50})
     assert rig.conn.sent == []
+
+
+async def test_update_timer_moves_stop_time_of_running_timer(rig, freezer):
+    rt, cook_id = await started(rig, CookRequest(temperature_f=350, minutes=30))
+    began = dt_util.utcnow()
+    await rig.advance(freezer, 600)  # 10 minutes in
+    rt.on_state(report("cook", cook_id, stages=TIMED, timer="running", timer_started=began))
+    await rt.update({"timer_seconds": 7200})
+    await rig.settle()
+    # 110 minutes left, plus the 10 minute margin
+    assert dt_util.parse_datetime(rig.saved["stop_at"]) == dt_util.utcnow() + timedelta(minutes=120)
+
+
+async def test_update_timer_can_bring_stop_time_forward(rig, freezer):
+    rt, cook_id = await started(rig, CookRequest(temperature_f=350, minutes=30))
+    rt.on_state(report("cook", cook_id, stages=TIMED, timer="running", timer_started=dt_util.utcnow()))
+    await rt.update({"timer_seconds": 300})
+    await rig.settle()
+    assert dt_util.parse_datetime(rig.saved["stop_at"]) == dt_util.utcnow() + timedelta(minutes=15)
+
+
+async def test_update_timer_not_started_adds_the_preheat_allowance(rig, freezer):
+    rt, cook_id = await started(rig, CookRequest(temperature_f=350, minutes=30, timer_mode="Manually"))
+    rt.on_state(report("cook", cook_id, stages=TIMED, timer="idle"))
+    await rt.update({"timer_seconds": 3600})
+    await rig.settle()
+    expected = dt_util.utcnow() + timedelta(minutes=60 + 10 + 60)
+    assert dt_util.parse_datetime(rig.saved["stop_at"]) == expected
+
+
+async def test_start_timer_moves_stop_time_with_no_preheat_allowance(rig, freezer):
+    rt, cook_id = await started(rig, CookRequest(temperature_f=350, minutes=30, timer_mode="Manually"))
+    rt.on_state(report("cook", cook_id, stages=TIMED, timer="idle"))
+    await rt.update({"start_timer": True})
+    await rig.settle()
+    assert dt_util.parse_datetime(rig.saved["stop_at"]) == dt_util.utcnow() + timedelta(minutes=40)
+
+
+async def test_own_max_minutes_stands_after_timer_change_and_restart(rig, freezer):
+    rt, cook_id = await started(rig, CookRequest(temperature_f=350, minutes=30, max_minutes=45))
+    stop_at = rig.saved["stop_at"]
+    assert rig.saved["max_minutes"] == 45
+    await rt.shutdown()
+    after = await rig.boot()
+    after.on_state(report("cook", cook_id, stages=TIMED, timer="running", timer_started=dt_util.utcnow()))
+    await after.update({"timer_seconds": 7200})
+    await rig.settle()
+    assert rig.saved["stop_at"] == stop_at
+
+
+async def test_default_limit_never_extends_without_a_timer(rig, freezer):
+    rt, cook_id = await started(rig)
+    rt.on_state(report("cook", cook_id, stages=NO_TIMER))
+    stop_at = rig.saved["stop_at"]
+    await rt.update({"start_timer": True})
+    await rig.settle()
+    assert rig.saved["stop_at"] == stop_at
+
+
+async def test_app_cook_timer_change_touches_no_stop_time(rig, freezer):
+    rt, cook_id = await started(rig)
+    stop_at = rig.saved["stop_at"]
+    rt.on_state(report("cook", OTHER, stages=TIMED, timer="running", timer_started=dt_util.utcnow()))
+    await rt.update({"timer_seconds": 7200})
+    await rig.settle()
+    assert rig.saved["stop_at"] == stop_at
+
+
+async def test_timer_change_does_not_cut_a_custom_cook_of_several_stages(rig, freezer):
+    two = [dict(ONE_STAGE[0], title="a"), dict(ONE_STAGE[0], title="b")]
+    rt = await rig.boot()
+    rt.on_state(report("idle"))
+    cook_id = await rt.start_custom(two, None)
+    await rig.settle()
+    stop_at = rig.saved["stop_at"]
+    rt.on_state(report("cook", cook_id, stages=two, timer="running", timer_started=dt_util.utcnow()))
+    await rt.update({"timer_seconds": 60})
+    await rig.settle()
+    assert rig.saved["stop_at"] == stop_at
+
+
+async def test_timer_change_refused_moves_nothing(rig, freezer):
+    rt, cook_id = await started(rig, CookRequest(temperature_f=350, minutes=30))
+    stop_at = rig.saved["stop_at"]
+    rt.on_state(report("cook", cook_id, stages=TIMED, timer="running", timer_started=dt_util.utcnow()))
+    rig.conn.errors = [OvenRefused("no")]
+    with pytest.raises(HomeAssistantError):
+        await rt.update({"timer_seconds": 7200})
+    assert rig.saved["stop_at"] == stop_at
+
+
+async def test_timer_change_does_not_put_off_a_due_stop(rig, freezer):
+    rt, cook_id = await started(rig, CookRequest(temperature_f=350, minutes=1, max_minutes=None))
+    rt.on_state(report("cook", cook_id, stages=TIMED, timer="running", timer_started=dt_util.utcnow()))
+    rt._stop_at = dt_util.utcnow()
+    await rt.update({"timer_seconds": 7200})
+    await rig.settle()
+    assert rt._stop_at <= dt_util.utcnow()
 
 
 @pytest.mark.parametrize("error", [OvenRefused("no"), OvenNoReply("x"), OvenOffline("x")])

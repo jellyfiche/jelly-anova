@@ -290,3 +290,12 @@ def test_state_is_frozen():
 def test_state_module_has_no_home_assistant_import():
     src = (Path(__file__).parent.parent / "custom_components/jelly_anova/state.py").read_text()
     assert "homeassistant" not in src
+
+
+def test_timer_started_read_from_the_report():
+    payload = load("login_cook.json")
+    payload["state"]["nodes"]["timer"]["startedAtTimestamp"] = "2026-11-01T12:00:00Z"
+    payload["state"]["cook"]["stages"][0].setdefault("do", {})["timer"] = {"initial": 60}
+    payload["state"]["cook"]["activeStageIndex"] = 0
+    cook = parse_state(payload, None).cook
+    assert cook.timer_started == datetime(2026, 11, 1, 12, 0, tzinfo=UTC)

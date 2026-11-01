@@ -51,7 +51,7 @@ BINARY_SENSORS: tuple[JellyAnovaBinaryDescription, ...] = (
     _d("waste_tank_removed", lambda s: s.waste_removed),
     # cavityLamp.on only. doorLamp.on is unreliable; the door light switch is a separate entity.
     _d("lamp_on", lambda s: s.lamp_on, device_class=BinarySensorDeviceClass.LIGHT),
-    _d("sous_vide", lambda s: s.cook.sous_vide if s.cook is not None else None),
+    _d("sous_vide", lambda s: (None if s.cook.in_end_stage else s.cook.sous_vide) if s.cook is not None else None),
     _d("oven_empty", lambda s: s.oven_empty),
     _d("online", lambda s: s.online, device_class=BinarySensorDeviceClass.CONNECTIVITY, **_DIAGNOSTIC),
     _d("descale_needed", lambda s: s.descale_needed, device_class=_PROBLEM),

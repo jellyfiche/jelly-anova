@@ -276,8 +276,8 @@ async def test_cook_sensors(hass, entry):
     assert state_of(hass, "sensor", "stages_count").state == "1"
     assert state_of(hass, "sensor", "timer_initial").state == "60"
     assert state_of(hass, "sensor", "timer_mode").state == "running"
-    assert state_of(hass, "sensor", "timer").state == "40"
-    assert state_of(hass, "sensor", "cook_time").state == "100"
+    assert state_of(hass, "sensor", "timer").state == "60"  # 40 s left, shown as 1 minute
+    assert state_of(hass, "sensor", "cook_time").state == "120"  # 100 s, rounded to 2 minutes
     assert state_of(hass, "sensor", "cook_origin").state == "ios"
     assert state_of(hass, "sensor", "steam_generator_mode").state == "steam-percentage"
     assert state_of(hass, "binary_sensor", "sous_vide").state == "off"
@@ -372,3 +372,58 @@ def test_entity_names_spelled():
         for word in re.findall(r"[A-Za-z]+", name):
             assert word.lower() in WORDS, f"{domain} {key}: {word!r} is not in the spell-checked word list"
         assert name == name.strip() and name[0].isupper()
+
+
+async def _cook_with_timer(hass, entry, mode, started, initial=3600, run_s=0, cook_s=0):
+    payload = fresh(load("login_cook.json"))
+    now = dt_util.utcnow()
+    node = payload["state"]["nodes"]["timer"]
+    node["mode"] = mode
+    if started:
+        node["startedAtTimestamp"] = (now - timedelta(seconds=run_s)).isoformat()
+    else:
+        node.pop("startedAtTimestamp", None)
+    payload["state"]["cook"]["stages"][0]["do"]["timer"]["initial"] = initial
+    payload["state"]["cook"]["startedTimestamp"] = (now - timedelta(seconds=cook_s)).isoformat()
+    await push(hass, entry, payload)
+
+
+async def test_finished_timer_is_not_shown_as_live(hass, entry):
+    # idle after it ran: it ended, so unknown
+    await _cook_with_timer(hass, entry, "idle", True, run_s=7200)
+    assert state_of(hass, "sensor", "timer").state == STATE_UNKNOWN
+    # idle before it ran (waiting for a manual start): the full time
+    await _cook_with_timer(hass, entry, "idle", False)
+    assert state_of(hass, "sensor", "timer").state == "3600"
+    await _cook_with_timer(hass, entry, "completed", True, run_s=7200)
+    assert state_of(hass, "sensor", "timer").state == "0"
+
+
+async def test_end_stage_hides_stage_values(hass, entry):
+    from custom_components.jelly_anova.const import END_STAGE_TITLE
+
+    payload = fresh(load("login_cook.json"))
+    cook = payload["state"]["cook"]
+    end = {"id": "end", "title": END_STAGE_TITLE, "do": {"type": "cook", "timer": {"initial": 43200}}}
+    cook["stages"].append(end)
+    cook["activeStageIndex"] = 1
+    cook["activeStageId"] = "end"
+    payload["state"]["nodes"]["temperatureBulbs"]["dry"]["setpoint"]["celsius"] = 25
+    payload["state"]["nodes"]["timer"]["mode"] = "running"
+    await push(hass, entry, payload)
+    for key in ("target_temperature", "timer", "timer_initial", "timer_mode", "target_temperature_probe"):
+        assert state_of(hass, "sensor", key).state == STATE_UNKNOWN, key
+    assert state_of(hass, "binary_sensor", "sous_vide").state == STATE_UNKNOWN
+    # the real stage, by contrast, shows its target
+    await push(hass, entry, fresh(load("login_cook.json")))
+    assert float(state_of(hass, "sensor", "target_temperature").state) == 60
+
+
+async def test_cook_time_and_timer_change_once_a_minute(hass, entry):
+    await _cook_with_timer(hass, entry, "running", True, run_s=61, cook_s=61)
+    first = (state_of(hass, "sensor", "cook_time").state, state_of(hass, "sensor", "timer").state)
+    await _cook_with_timer(hass, entry, "running", True, run_s=80, cook_s=80)
+    assert (state_of(hass, "sensor", "cook_time").state, state_of(hass, "sensor", "timer").state) == first
+    assert int(first[0]) % 60 == 0 and int(first[1]) % 60 == 0
+    await _cook_with_timer(hass, entry, "running", True, run_s=130, cook_s=130)
+    assert state_of(hass, "sensor", "cook_time").state != first[0]

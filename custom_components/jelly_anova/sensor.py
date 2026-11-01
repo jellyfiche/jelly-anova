@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+import math
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -48,25 +48,41 @@ def _active_stage(state: OvenState) -> int | None:
     return min(cook.stage_index + 1, cook.stage_count)
 
 
+def _stage_value(state: OvenState, value: Any) -> Any:
+    """A value taken from the running stage; nothing while the hidden end stage runs."""
+    if state.cook is not None and state.cook.in_end_stage:
+        return None
+    return value
+
+
+def _minutes(seconds: float, up: bool = False) -> int:
+    """Whole minutes, as seconds, so the sensor changes once a minute (the recorder)."""
+    return int(math.ceil(seconds / 60) if up else round(seconds / 60)) * 60
+
+
 def _cook_time(state: OvenState) -> int | None:
     started = _cook(state, "started")
     if started is None:
         return None
-    return max(0, int((state.updated - started).total_seconds()))
+    return _minutes(max(0.0, (state.updated - started).total_seconds()))
 
 
 def _timer(state: OvenState) -> int | None:
-    """Seconds left as of the report: counted down while running, 0 when done, the full
-    time while it waits."""
+    """Time left as of the report, in whole minutes (seconds). Counted down while running,
+    0 when completed, the full time while waiting. Idle with a start time means it ran and
+    ended: unknown. None while the hidden end stage runs (its timer is not the user's)."""
     cook = state.cook
-    if cook is None or cook.timer_initial is None or cook.timer_mode is None:
+    if cook is None or cook.in_end_stage or cook.timer_initial is None or cook.timer_mode is None:
         return None
     if cook.timer_mode == "running":
         if cook.timer_started is None:
             return None
-        return max(0, int(cook.timer_initial - (state.updated - cook.timer_started).total_seconds()))
+        left = cook.timer_initial - (state.updated - cook.timer_started).total_seconds()
+        return _minutes(max(0.0, left), up=True)
     if cook.timer_mode == "completed":
         return 0
+    if cook.timer_mode == "idle":
+        return None if cook.timer_started is not None else cook.timer_initial
     return cook.timer_initial
 
 
@@ -130,17 +146,17 @@ SENSORS: tuple[JellyAnovaSensorDescription, ...] = (
     _d("stages_count", lambda s: s.cook.stage_count if s.cook is not None else None),
     _d("cook_time", _cook_time, **_SECONDS),
     _d("timer", _timer, **_SECONDS),
-    _d("timer_initial", lambda s: _cook(s, "timer_initial"), **_SECONDS),
-    _d("timer_mode", lambda s: _cook(s, "timer_mode")),
+    _d("timer_initial", lambda s: _stage_value(s, _cook(s, "timer_initial")), **_SECONDS),
+    _d("timer_mode", lambda s: _stage_value(s, _cook(s, "timer_mode"))),
     _d("cook_origin", lambda s: _cook(s, "origin")),
     # Temperature
     _d("temperature", lambda s: s.dry_c, **_TEMPERATURE),
     _d("wet_temperature", lambda s: s.wet_c, **_TEMPERATURE),
     _d("top_temperature", lambda s: s.dry_top_c, **_TEMPERATURE),
     _d("bottom_temperature", lambda s: s.dry_bottom_c, **_TEMPERATURE),
-    _d("target_temperature", lambda s: s.target_c, **_TEMPERATURE),
+    _d("target_temperature", lambda s: _stage_value(s, s.target_c), **_TEMPERATURE),
     _d("temperature_probe", lambda s: s.probe_c, **_TEMPERATURE),
-    _d("target_temperature_probe", lambda s: s.target_probe_c, **_TEMPERATURE),
+    _d("target_temperature_probe", lambda s: _stage_value(s, s.target_probe_c), **_TEMPERATURE),
     # Steam
     _d("steam_generator_mode", lambda s: s.steam_mode),
     _d(
@@ -152,7 +168,7 @@ SENSORS: tuple[JellyAnovaSensorDescription, ...] = (
     ),
     _d(
         "target_humidity",
-        lambda s: s.target_humidity,
+        lambda s: _stage_value(s, s.target_humidity),
         device_class=SensorDeviceClass.HUMIDITY,
         native_unit_of_measurement=PERCENTAGE,
     ),
@@ -162,7 +178,7 @@ SENSORS: tuple[JellyAnovaSensorDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    _d("target_steam_percentage", lambda s: s.target_steam_percent, native_unit_of_measurement=PERCENTAGE),
+    _d("target_steam_percentage", lambda s: _stage_value(s, s.target_steam_percent), native_unit_of_measurement=PERCENTAGE),
     _d("boiler_watts", _watts("boiler"), **_WATTS),
     _d("evaporator_watts", _watts("evaporator"), **_WATTS),
     _d("boiler_temperature", lambda s: s.boiler_c, **_TEMPERATURE),

@@ -151,6 +151,56 @@ async def stop(conn, task):
     await asyncio.wait_for(task, 2)
 
 
+async def test_a_socket_with_no_reports_for_three_minutes_is_reopened(monkeypatch):
+    assert connection.REPORT_SILENCE == 180
+    monkeypatch.setattr(connection, "REPORT_SILENCE", 0.05)
+    quiet, next_one = FakeWS(), FakeWS()
+    session = FakeSession(quiet, next_one)
+    conn = make(session)
+    task = await started(conn)
+    await until(lambda: session.calls)
+    quiet.push(report(FUTURE))
+    await asyncio.wait_for(wait_until(lambda: len(session.calls) == 2), 2)
+    assert quiet.closed
+    assert conn.status[:2] == [True, False]
+    await stop(conn, task)
+
+
+async def test_only_live_reports_keep_a_socket_open(monkeypatch):
+    monkeypatch.setattr(connection, "REPORT_SILENCE", 0.05)
+    ws = FakeWS()
+    session = FakeSession(ws, FakeWS())
+    conn = make(session)
+    task = await started(conn)
+    await until(lambda: session.calls)
+    for _ in range(10):  # a cached report and other messages are not reports from the oven
+        ws.push(report(OLD))
+        ws.push(WIFI)
+        await asyncio.sleep(0.01)
+    await asyncio.wait_for(wait_until(lambda: len(session.calls) >= 2), 2)
+    assert conn.states == []
+    await stop(conn, task)
+
+
+async def test_live_reports_hold_the_socket_open(monkeypatch):
+    monkeypatch.setattr(connection, "REPORT_SILENCE", 0.5)
+    ws = FakeWS()
+    session = FakeSession(ws)
+    conn = make(session)
+    task = await started(conn)
+    await until(lambda: session.calls)
+    for second in range(10, 20):
+        ws.push(report(f"2999-01-01T00:00:{second}Z"))
+        await asyncio.sleep(0.1)  # two seconds in all, each gap under the limit
+    assert len(session.calls) == 1 and not ws.closed
+    await stop(conn, task)
+
+
+async def wait_until(check):
+    while not check():
+        await asyncio.sleep(0.005)
+
+
 async def test_url_and_subprotocol():
     ws = FakeWS()
     session = FakeSession(ws)

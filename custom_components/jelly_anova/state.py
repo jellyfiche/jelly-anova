@@ -206,8 +206,8 @@ def _cook(raw: Any, nodes: dict) -> CookInfo | None:
     stage_timer = _get(active, "do", "timer")
     has_timer = isinstance(stage_timer, dict)
     timer_initial = _num(stage_timer.get("initial")) if has_timer else None
-    humidity_setpoint = _num(_get(active, "do", "steamGenerators", "relativeHumidity", "setpoint"))
-    sous_vide = _get(active, "do", "temperatureBulbs", "mode") == "wet" and humidity_setpoint == 100
+    # Wet-bulb mode at any humidity, as andr83's sensor meant it.
+    sous_vide = _get(active, "do", "temperatureBulbs", "mode") == "wet"
     rack = raw.get("rackPosition")
     return CookInfo(
         cook_id=_text(raw.get("cookId")),

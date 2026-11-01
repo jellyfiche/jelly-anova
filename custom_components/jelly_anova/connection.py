@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -30,6 +31,7 @@ FIRST_DELAY = 5
 MAX_DELAY = 300
 BACKUP_WAIT = 8  # seconds the backup stop waits for the oven's reply
 CONNECT_TIMEOUT = 15  # seconds allowed to fetch a token and open a websocket
+REPORT_SILENCE = 180  # seconds with no live report before reconnecting (idle reports: every 15 s)
 
 # Failures that mean "try again later". Their text is never logged.
 _RETRY_ERRORS = (CannotConnect, aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError)
@@ -109,6 +111,7 @@ class OvenConnection:
         self._sleeper: asyncio.Future | None = None
         self._connected_at = datetime.min.replace(tzinfo=UTC)
         self._state: OvenState | None = None
+        self._last_report = 0.0  # time.monotonic() of the last live report, or of the connect
         self._up = False
 
     # --- opening and running -------------------------------------------------
@@ -154,6 +157,7 @@ class OvenConnection:
                 self._drop(self._ws)
             self._ws = ws
             self._connected_at = datetime.now(UTC)
+            self._last_report = time.monotonic()
             self._state = None
             self._reader = asyncio.create_task(self._read(ws))
             self._set_up(True)
@@ -200,10 +204,24 @@ class OvenConnection:
                 await self._backoff()
                 continue
             if self._reader is not None:
-                await asyncio.wait([self._reader])
+                await self._watch(self._reader)
             if self._closing:
                 return
             await self._backoff()
+
+    async def _watch(self, reader: asyncio.Task) -> None:
+        """Return when the reader ends, ending it if the socket stays up while reports stop.
+
+        The heartbeat only shows the cloud answers, not that the oven's reports still arrive.
+        """
+        while not reader.done():
+            left = self._last_report + REPORT_SILENCE - time.monotonic()
+            if left <= 0:
+                _LOGGER.debug("No live report from Anova, reconnecting")
+                reader.cancel()  # its own cleanup closes the socket and marks it down
+                await asyncio.wait([reader])
+                return
+            await asyncio.wait([reader], timeout=left)
 
     async def _backoff(self) -> None:
         delay = self._delay
@@ -303,6 +321,7 @@ class OvenConnection:
         if not is_newer(state, floor):
             return
         self._state = state
+        self._last_report = time.monotonic()
         self._delay = FIRST_DELAY  # a live report proves the connection is healthy
         self._safe(self._on_state, state)
 

@@ -249,6 +249,13 @@ def test_in_end_stage_flag():
     assert s.cook.stage_index == 1
 
 
+def test_sous_vide_means_wet_bulb_mode_at_any_humidity():
+    raw = load("app_sous_vide.json")
+    stage = raw["state"]["cook"]["stages"][0] if "state" in raw else raw["cook"]["stages"][0]
+    stage["do"]["steamGenerators"]["relativeHumidity"]["setpoint"] = 40
+    assert parse_state(raw, None).cook.sous_vide is True
+
+
 def test_sous_vide_no_timer():
     s = parse_state(load("app_sous_vide.json"), None)
     assert s.mode == "cook"

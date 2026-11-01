@@ -361,7 +361,7 @@
         },
         "humidity": {
           "name": "Humidity",
-          "description": "Relative humidity as a percentage, 0 to 100. Not together with steam."
+          "description": "Relative humidity as a percentage, 0 to 100. The oven temperature can then go up to 212 F. Not together with steam."
         },
         "sous_vide": {
           "name": "Sous vide",

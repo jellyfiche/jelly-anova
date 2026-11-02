@@ -1,0 +1,2 @@
+45362e1b7ee34ffef8c759e674205b87cd49555c custom_components/jelly_anova/brand/icon.png
+59649d1bf8ffaf68b8507c9f85cfb038d288b73e custom_components/jelly_anova/brand/icon@2x.png

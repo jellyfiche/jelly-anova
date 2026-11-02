@@ -1,4 +1,4 @@
-"""Shared test setup for Jelly Anova."""
+"""Shared test setup for Anova Precision Oven."""
 
 import pytest
 

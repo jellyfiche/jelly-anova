@@ -1,4 +1,4 @@
-"""Jelly Anova: unofficial Home Assistant integration for the Anova Precision Oven."""
+"""Anova Precision Oven: unofficial Home Assistant integration for the Anova Precision Oven."""
 
 import asyncio
 

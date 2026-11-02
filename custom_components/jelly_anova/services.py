@@ -32,7 +32,7 @@ from .runtime import OvenRuntime
 TIMER_MODES = ["Immediately", "When Preheated", "Manually", "When Food Detected", "When Food Removed"]
 NOT_SET_UP = (
     "The Anova oven is not set up in Home Assistant, so this action cannot run. "
-    "Add the Jelly Anova integration first."
+    "Add the Anova Precision Oven integration first."
 )
 
 _NUMBER = vol.Coerce(float)

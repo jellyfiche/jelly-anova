@@ -1,4 +1,4 @@
-"""Constants for Jelly Anova."""
+"""Constants for Anova Precision Oven."""
 
 DOMAIN = "jelly_anova"
 

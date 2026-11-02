@@ -1,6 +1,6 @@
 {
   "domain": "jelly_anova",
-  "name": "Jelly Anova",
+  "name": "Anova Precision Oven",
   "codeowners": ["@jellyfiche"],
   "config_flow": true,
   "documentation": "https://github.com/jellyfiche/jelly-anova",
@@ -8,5 +8,5 @@
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/jellyfiche/jelly-anova/issues",
   "requirements": [],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }

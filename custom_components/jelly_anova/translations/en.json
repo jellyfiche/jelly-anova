@@ -18,7 +18,7 @@
           "api_key": "Anova web key (only if asked)"
         },
         "data_description": {
-          "api_key": "Jelly Anova reads this public key from Anova's website. It could not be found this time, so paste it here if you have it."
+          "api_key": "Anova Precision Oven reads this public key from Anova's website. It could not be found this time, so paste it here if you have it."
         }
       },
       "paste": {
@@ -29,7 +29,7 @@
           "api_key": "Anova web key (only if asked)"
         },
         "data_description": {
-          "api_key": "Jelly Anova reads this public key from Anova's website. It could not be found this time, so paste it here if you have it."
+          "api_key": "Anova Precision Oven reads this public key from Anova's website. It could not be found this time, so paste it here if you have it."
         }
       },
       "personal": {
@@ -56,14 +56,14 @@
       "no_api_key": "The Anova web key could not be found. Paste it into the key box."
     },
     "abort": {
-      "single_instance_allowed": "Jelly Anova is already set up.",
+      "single_instance_allowed": "Anova Precision Oven is already set up.",
       "reauth_successful": "Signed in again."
     }
   },
   "issues": {
     "login_failed": {
       "title": "Anova login stopped working during a cook",
-      "description": "Anova no longer accepts the saved login while the oven may be cooking, so Home Assistant cannot see the oven. Check the oven, then sign in again from the Jelly Anova integration. A saved stop time still goes out, through the personal token if you added one."
+      "description": "Anova no longer accepts the saved login while the oven may be cooking, so Home Assistant cannot see the oven. Check the oven, then sign in again from the Anova Precision Oven integration. A saved stop time still goes out, through the personal token if you added one."
     },
     "stop_failed": {
       "title": "The oven may not have stopped",

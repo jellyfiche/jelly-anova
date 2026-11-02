@@ -1,4 +1,4 @@
-"""The base for every Jelly Anova entity: one device, availability and live updates."""
+"""The base for every Anova Precision Oven entity: one device, availability and live updates."""
 
 from __future__ import annotations
 

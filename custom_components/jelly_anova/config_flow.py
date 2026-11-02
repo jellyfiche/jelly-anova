@@ -1,4 +1,4 @@
-"""Setup screen for Jelly Anova.
+"""Setup screen for Anova Precision Oven.
 
 Asks for the Anova email and password once, swaps them for a refresh token and keeps only that.
 Only one Anova account is set up at a time (single instance), so no email or account id is

@@ -65,7 +65,7 @@ DESIGN = [
     ("binary_sensor", "cooking", True),
     ("binary_sensor", "door_closed", True),
     ("binary_sensor", "probe_connected", True),
-    ("binary_sensor", "vent_closed", True),
+    ("binary_sensor", "vent_closed", False),
     ("binary_sensor", "water_low", True),
     ("binary_sensor", "water_tank_empty", True),
     ("binary_sensor", "water_tank_removed", True),
@@ -131,7 +131,8 @@ WORDS = set(
     overheated part power preference probe progress pump rear relative removed sous stage stages
     count steam switches tank target temperature time timer top total updated usage valve vent
     vide voltage waste water watts wet confidence connected closed disconnected empty generator
-    percentage speed version needed""".split()
+    percentage speed version needed status level number of current length connection descaling
+    overheating position parts used started from bulb""".split()
 )  # fmt: skip
 
 
@@ -194,15 +195,15 @@ def test_old_integration_keys_are_kept():
     assert set(OLD_BINARY) <= {d.key for d in BINARY_SENSORS}
 
 
-async def test_device_is_named_and_probe_id_matches_the_old_one(hass, entry):
+async def test_device_is_named_and_ids_follow_the_names(hass, entry):
     registry = er.async_get(hass)
     devices = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
     assert [d.name for d in devices] == ["Anova Precision Oven"]
     assert registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_temperature_probe") == (
-        "sensor.anova_precision_oven_probe"
+        "sensor.anova_precision_oven_probe_temperature"
     )
     assert registry.async_get_entity_id("binary_sensor", DOMAIN, f"{entry.entry_id}_sous_vide") == (
-        "binary_sensor.anova_precision_oven_sous_vide"
+        "binary_sensor.anova_precision_oven_sous_vide_mode"
     )
 
 

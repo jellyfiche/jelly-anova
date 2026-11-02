@@ -73,13 +73,17 @@
   "entity": {
     "sensor": {
       "mode": {
-        "name": "Mode"
+        "name": "Oven status",
+        "state": {
+          "idle": "Idle",
+          "cook": "Cooking"
+        }
       },
       "active_stage": {
-        "name": "Active stage"
+        "name": "Current stage"
       },
       "stages_count": {
-        "name": "Stage count"
+        "name": "Number of stages"
       },
       "cook_time": {
         "name": "Cook time"
@@ -88,19 +92,27 @@
         "name": "Timer"
       },
       "timer_initial": {
-        "name": "Timer initial"
+        "name": "Timer length"
       },
       "timer_mode": {
-        "name": "Timer mode"
+        "name": "Timer status",
+        "state": {
+          "idle": "Idle",
+          "running": "Running",
+          "completed": "Finished"
+        }
       },
       "cook_origin": {
-        "name": "Cook origin"
+        "name": "Cook started from",
+        "state": {
+          "ios": "App or Home Assistant"
+        }
       },
       "temperature": {
-        "name": "Temperature"
+        "name": "Oven temperature"
       },
       "wet_temperature": {
-        "name": "Wet temperature"
+        "name": "Wet-bulb temperature"
       },
       "top_temperature": {
         "name": "Top temperature"
@@ -112,13 +124,18 @@
         "name": "Target temperature"
       },
       "temperature_probe": {
-        "name": "Probe"
+        "name": "Probe temperature"
       },
       "target_temperature_probe": {
-        "name": "Target probe"
+        "name": "Target probe temperature"
       },
       "steam_generator_mode": {
-        "name": "Steam mode"
+        "name": "Steam mode",
+        "state": {
+          "idle": "Off",
+          "steam-percentage": "Steam percentage",
+          "relative-humidity": "Humidity"
+        }
       },
       "relative_humidity": {
         "name": "Humidity"
@@ -127,16 +144,16 @@
         "name": "Target humidity"
       },
       "steam_percentage": {
-        "name": "Steam percentage"
+        "name": "Steam level"
       },
       "target_steam_percentage": {
-        "name": "Target steam percentage"
+        "name": "Target steam level"
       },
       "boiler_watts": {
-        "name": "Boiler watts"
+        "name": "Boiler power"
       },
       "evaporator_watts": {
-        "name": "Evaporator watts"
+        "name": "Evaporator power"
       },
       "boiler_temperature": {
         "name": "Boiler temperature"
@@ -145,34 +162,42 @@
         "name": "Evaporator temperature"
       },
       "top_watts": {
-        "name": "Top watts"
+        "name": "Top element power"
       },
       "bottom_watts": {
-        "name": "Bottom watts"
+        "name": "Bottom element power"
       },
       "rear_watts": {
-        "name": "Rear watts"
+        "name": "Rear element power"
       },
       "fan_speed": {
-        "name": "Fan speed"
+        "name": "Fan speed",
+        "state": {
+          "max": "Maximum"
+        }
       },
       "vent_state": {
-        "name": "Vent"
+        "name": "Vent",
+        "state": {
+          "closed": "Closed",
+          "open-mid": "Half open",
+          "open-max": "Fully open"
+        }
       },
       "top_element_hours": {
-        "name": "Top element hours"
+        "name": "Top element hours used"
       },
       "bottom_element_hours": {
-        "name": "Bottom element hours"
+        "name": "Bottom element hours used"
       },
       "rear_element_hours": {
-        "name": "Rear element hours"
+        "name": "Rear element hours used"
       },
       "boiler_hours": {
-        "name": "Boiler hours"
+        "name": "Boiler hours used"
       },
       "evaporator_hours": {
-        "name": "Evaporator hours"
+        "name": "Evaporator hours used"
       },
       "firmware": {
         "name": "Firmware"
@@ -181,7 +206,7 @@
         "name": "Firmware updated"
       },
       "total_cook_hours": {
-        "name": "Cooking hours"
+        "name": "Total cooking hours"
       },
       "exhaust_fan_speed": {
         "name": "Exhaust fan speed"
@@ -231,76 +256,156 @@
     },
     "binary_sensor": {
       "cooking": {
-        "name": "Cooking"
+        "name": "Cooking",
+        "state": {
+          "on": "Yes",
+          "off": "No"
+        }
       },
       "door_closed": {
-        "name": "Door closed"
+        "name": "Door",
+        "state": {
+          "on": "Closed",
+          "off": "Open"
+        }
       },
       "probe_connected": {
-        "name": "Probe connected"
+        "name": "Probe connection"
       },
       "vent_closed": {
-        "name": "Vent closed"
+        "name": "Vent closed",
+        "state": {
+          "on": "Yes",
+          "off": "No"
+        }
       },
       "water_low": {
-        "name": "Water low"
+        "name": "Water level",
+        "state": {
+          "on": "Low",
+          "off": "OK"
+        }
       },
       "water_tank_empty": {
-        "name": "Water tank empty"
+        "name": "Water tank",
+        "state": {
+          "on": "Empty",
+          "off": "Not empty"
+        }
       },
       "water_tank_removed": {
-        "name": "Water tank removed"
+        "name": "Water tank position",
+        "state": {
+          "on": "Removed",
+          "off": "In place"
+        }
       },
       "waste_tank_full": {
-        "name": "Waste tank full"
+        "name": "Waste tank",
+        "state": {
+          "on": "Full",
+          "off": "Not full"
+        }
       },
       "waste_tank_removed": {
-        "name": "Waste tank removed"
+        "name": "Waste tank position",
+        "state": {
+          "on": "Removed",
+          "off": "In place"
+        }
       },
       "lamp_on": {
-        "name": "Cavity lamp"
+        "name": "Oven light"
       },
       "sous_vide": {
-        "name": "Sous vide"
+        "name": "Sous vide mode"
       },
       "oven_empty": {
-        "name": "Oven empty"
+        "name": "Oven empty",
+        "state": {
+          "on": "Yes",
+          "off": "No"
+        }
       },
       "online": {
-        "name": "Online"
+        "name": "Oven connection"
       },
       "descale_needed": {
-        "name": "Descale needed"
+        "name": "Descaling",
+        "state": {
+          "on": "Needed",
+          "off": "OK"
+        }
       },
       "any_failed": {
-        "name": "Any part failed"
+        "name": "Parts status",
+        "state": {
+          "on": "Failed",
+          "off": "OK"
+        }
       },
       "cavity_overheated": {
-        "name": "Overheated"
+        "name": "Overheating",
+        "state": {
+          "on": "Overheated",
+          "off": "OK"
+        }
       },
       "triacs_failed": {
-        "name": "Power switches failed"
+        "name": "Power switches",
+        "state": {
+          "on": "Failed",
+          "off": "OK"
+        }
       },
       "lamp_failed": {
-        "name": "Lamp failed"
+        "name": "Oven light status",
+        "state": {
+          "on": "Failed",
+          "off": "OK"
+        }
       },
       "top_element_failed": {
-        "name": "Top element failed"
+        "name": "Top element status",
+        "state": {
+          "on": "Failed",
+          "off": "OK"
+        }
       },
       "bottom_element_failed": {
-        "name": "Bottom element failed"
+        "name": "Bottom element status",
+        "state": {
+          "on": "Failed",
+          "off": "OK"
+        }
       },
       "rear_element_failed": {
-        "name": "Rear element failed"
+        "name": "Rear element status",
+        "state": {
+          "on": "Failed",
+          "off": "OK"
+        }
       },
       "boiler_failed": {
-        "name": "Boiler failed"
+        "name": "Boiler status",
+        "state": {
+          "on": "Failed",
+          "off": "OK"
+        }
       },
       "evaporator_failed": {
-        "name": "Evaporator failed"
+        "name": "Evaporator status",
+        "state": {
+          "on": "Failed",
+          "off": "OK"
+        }
       },
       "fan_failed": {
-        "name": "Fan failed"
+        "name": "Fan status",
+        "state": {
+          "on": "Failed",
+          "off": "OK"
+        }
       }
     },
     "button": {

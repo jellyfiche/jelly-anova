@@ -40,10 +40,11 @@ def _d(key: str, value_fn: Callable[[OvenState], bool | None], **kwargs) -> Jell
 
 BINARY_SENSORS: tuple[JellyAnovaBinaryDescription, ...] = (
     _d("cooking", lambda s: (s.mode == "cook") if s.mode is not None else None),
-    # "Door closed" is on when the door is closed.
+    # On when the door is closed: strings.json words it Closed and Open.
     _d("door_closed", lambda s: s.door_closed),
     _d("probe_connected", lambda s: s.probe_connected, device_class=BinarySensorDeviceClass.CONNECTIVITY),
-    _d("vent_closed", lambda s: s.vent_closed),
+    # The Vent sensor says the same and more, so this one starts switched off.
+    _d("vent_closed", lambda s: s.vent_closed, **_RARE),
     _d("water_low", lambda s: s.water_low, device_class=_PROBLEM),
     _d("water_tank_empty", lambda s: s.water_empty, device_class=_PROBLEM),
     _d("water_tank_removed", lambda s: s.water_removed),

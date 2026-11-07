@@ -1552,3 +1552,71 @@ async def test_update_failure_is_a_plain_error(rig, error):
     rig.conn.errors = [error]
     with pytest.raises(HomeAssistantError):
         await rt.update({"fan": 50})
+
+
+# --- the camera's stream ------------------------------------------------------
+
+LIVE_STOP = "CMD_APO_STOP_LIVE_STREAM"
+
+
+async def viewing(rt, monkeypatch):
+    """A viewer watching the camera; the oven's start and the video service are stand-ins."""
+    from custom_components.jelly_anova import stream as stream_module
+
+    async def started():
+        return "https://whep.example/play"
+
+    async def offered(link, offer):
+        return "answer", None
+
+    monkeypatch.setattr(stream_module, "FIRST_OFFER_WAIT", 0)
+    monkeypatch.setattr(rt.live_stream, "_start", started)
+    monkeypatch.setattr(rt.live_stream, "_offer", offered)
+    await rt.live_stream.watch("phone", "offer")
+    assert rt.live_stream.watching
+
+
+async def test_cook_end_ends_viewers(rig, freezer, monkeypatch):
+    rt = await rig.boot()
+    rt.on_state(report("cook", OTHER))
+    await viewing(rt, monkeypatch)
+    rt.on_state(report("idle"))
+    assert not rt.live_stream.watching
+    await rig.advance(freezer, 120)
+    assert rig.conn.count(LIVE_STOP) == 0
+
+
+async def test_connection_down_ends_viewers(rig, freezer, monkeypatch):
+    rt = await rig.boot()
+    rt.on_state(report("cook", OTHER))
+    await viewing(rt, monkeypatch)
+    rt.on_status(False)
+    assert not rt.live_stream.watching
+    await rig.advance(freezer, 120)
+    assert rig.conn.count(LIVE_STOP) == 0
+
+
+async def test_shutdown_stops_running_stream(rig, monkeypatch):
+    rt = await rig.boot()
+    rt.on_state(report("cook", OTHER))
+    await viewing(rt, monkeypatch)
+    await rt.shutdown()
+    assert rig.conn.count(LIVE_STOP) == 1
+    assert not rt.live_stream.watching
+
+
+async def test_shutdown_never_waits_long_for_the_video_stop(rig, monkeypatch):
+    from custom_components.jelly_anova import stream as stream_module
+
+    monkeypatch.setattr(stream_module, "STOP_TIMEOUT", 0.05)
+    rt = await rig.boot()
+    rt.on_state(report("cook", OTHER))
+    await viewing(rt, monkeypatch)
+    rig.conn.gate = asyncio.Event()  # nothing answers
+
+    async def hangs(command, payload, timeout=10):
+        await rig.conn.gate.wait()
+
+    monkeypatch.setattr(rig.conn, "send", hangs)
+    async with asyncio.timeout(2):
+        await rt.shutdown()

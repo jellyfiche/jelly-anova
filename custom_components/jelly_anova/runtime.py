@@ -53,6 +53,7 @@ from .cook import (
 )
 from .errors import plain_errors
 from .state import CookInfo, OvenState, is_newer
+from .stream import OvenLiveStream
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -142,6 +143,7 @@ class OvenRuntime:
         self._entry = entry
         self.connection = connection
         self._session = session
+        self.live_stream = OvenLiveStream(hass, connection, session)  # the camera's video
         self._store: Store = Store(hass, STORE_VERSION, f"{DOMAIN}.{entry.entry_id}")
         self.run_task: asyncio.Task | None = None  # connection.run(), set by async_setup_entry
 
@@ -266,6 +268,7 @@ class OvenRuntime:
         if self._closed:
             return
         self._closed = True
+        await self.live_stream.shutdown()
         if self._cancel_tick is not None:
             self._cancel_tick()
         if self._stop_task is not None and not self._stop_task.done():
@@ -282,6 +285,7 @@ class OvenRuntime:
         self._connected = up
         if not up:
             self._hours_from = None
+            self.live_stream.end_all()  # the video went with the connection
         self._notify()
 
     @callback
@@ -309,6 +313,8 @@ class OvenRuntime:
         self._track_cook(state)
         self._check_timer_end(state)
         self._check_stop_due()
+        if state.mode != "cook":
+            self.live_stream.end_all()  # the oven streams only during a cook
         if self._login_issue:
             self._login_issue = False
             ir.async_delete_issue(self._hass, DOMAIN, ISSUE_LOGIN)

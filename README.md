@@ -13,6 +13,12 @@ repository:
 4. Go to **Settings > Devices & services > Add integration**, choose **Anova Precision Oven**, and sign in
    with your Anova account. Your password is used once and is not saved.
 
+## Camera
+
+The oven's **Camera** shows live video while the oven is cooking, and is unavailable otherwise.
+The video comes from Anova's own video service, as in the Anova app. It stops a minute after
+the last viewer closes it. There are no still pictures.
+
 ## Unofficial, and it can break
 
 This project is unofficial. It is not made, supported or endorsed by Anova.
@@ -27,3 +33,5 @@ This builds on the work of others who worked out how the oven talks:
 - [andr83/hacs-anova-oven](https://github.com/andr83/hacs-anova-oven)
 - [XVincentX/hacs-anova-oven](https://github.com/XVincentX/hacs-anova-oven)
 - [bogd/anova-oven-api](https://github.com/bogd/anova-oven-api)
+- [awgneo/anova-culinary](https://github.com/awgneo/anova-culinary) and
+  [ampdot-io/anova-oven-mcp](https://github.com/ampdot-io/anova-oven-mcp), for how the live video works

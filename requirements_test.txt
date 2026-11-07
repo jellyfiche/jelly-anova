@@ -1,3 +1,5 @@
 # Python 3.14 is required by this release.
 # 0.13.375 pins homeassistant==2026.10.4, the version this is tested against.
 pytest-homeassistant-custom-component==0.13.375
+# Home Assistant camera needs this; the test package does not install it (camera manifest).
+PyTurboJPEG==1.8.3

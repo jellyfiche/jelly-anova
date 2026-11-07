@@ -23,6 +23,7 @@ PLATFORMS = [
     Platform.NUMBER,
     Platform.SWITCH,
     Platform.SELECT,
+    Platform.CAMERA,
 ]
 UNLOAD_WAIT = 10  # seconds unload waits for the connection to finish
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)

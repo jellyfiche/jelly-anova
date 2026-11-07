@@ -437,6 +437,11 @@
           "fahrenheit": "Fahrenheit"
         }
       }
+    },
+    "camera": {
+      "camera": {
+        "name": "Camera"
+      }
     }
   },
   "services": {

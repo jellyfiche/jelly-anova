@@ -260,3 +260,79 @@ async def test_link_never_logged(hass, live, conn, aioclient_mock, freezer, capl
     assert "Live video started" in caplog.text
     assert "Live video stop sent" in caplog.text
     assert "whep.example" not in caplog.text
+
+
+# --- review fixes: viewers that go away mid-offer, and odd answers -------------
+
+
+def answer_then(aioclient_mock, action, location=RESOURCE):
+    """The WHEP link answers 201, but `action` runs first, while the offer is still out."""
+
+    async def answer(method, url, data):
+        await action()
+        return AiohttpClientMockResponse(
+            method, url, status=201, text="answer-sdp", headers={"Location": location} if location else {}
+        )
+
+    aioclient_mock.post(LINK, side_effect=answer)
+    aioclient_mock.delete(RESOURCE, status=200)
+
+
+async def test_viewer_closed_during_offer_is_forgotten(hass, live, conn, aioclient_mock, freezer):
+    async def viewer_goes_away():
+        await live.leave("phone")
+
+    answer_then(aioclient_mock, viewer_goes_away)
+    with pytest.raises(CameraFailed):
+        await live.watch("phone", "offer")
+    assert not live.watching
+    assert deletes(aioclient_mock) == [RESOURCE]
+    await advance(hass, freezer, 60)
+    assert conn.count(STOP) == 1
+    await advance(hass, freezer, 120)
+    assert conn.count(START) == 1
+
+
+async def test_end_all_during_offer_leaves_nothing_running(hass, live, conn, aioclient_mock, freezer):
+    async def cook_ends():
+        live.end_all()
+
+    answer_then(aioclient_mock, cook_ends)
+    with pytest.raises(CameraFailed):
+        await live.watch("phone", "offer")
+    assert not live.watching
+    await advance(hass, freezer, 180)
+    assert conn.sent == [(START, None)]
+
+
+async def test_end_all_during_start_keeps_no_link(hass, live, conn, aioclient_mock):
+    real_send = conn.send
+
+    async def start_then_cook_ends(command, payload, timeout=10):
+        reply = await real_send(command, payload, timeout)
+        live.end_all()
+        return reply
+
+    conn.send = start_then_cook_ends
+    answers(aioclient_mock, 201)
+    with pytest.raises(CameraFailed):
+        await live.watch("phone", "offer")
+    assert not live.watching
+    conn.send = real_send
+    answers(aioclient_mock, 201)
+    await live.watch("phone", "offer")
+    assert conn.count(START) == 2  # the new cook gets a new stream
+
+
+async def test_malformed_location_is_ignored(live, aioclient_mock):
+    answers(aioclient_mock, 201, location="http://[broken")
+    assert await live.watch("phone", "offer") == "answer-sdp"
+    await live.leave("phone")
+    assert deletes(aioclient_mock) == []
+
+
+async def test_watch_after_shutdown_is_refused(live, conn):
+    await live.shutdown()
+    with pytest.raises(CameraFailed):
+        await live.watch("phone", "offer")
+    assert conn.sent == []

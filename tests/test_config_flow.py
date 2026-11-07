@@ -141,6 +141,13 @@ async def test_only_one_entry(hass, aioclient_mock, key_found):
     assert result["reason"] == "single_instance_allowed"
 
 
+async def settle_reload(hass, entry):
+    """A successful reauth reloads the entry; let that finish and unload it before the test ends."""
+    await hass.async_block_till_done()
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
 async def test_reauth_updates_token(hass, aioclient_mock, key_found):
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -157,6 +164,7 @@ async def test_reauth_updates_token(hass, aioclient_mock, key_found):
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
     assert entry.data == {"refresh_token": "refresh-new", "personal_token": "pat-1", "api_key": KEY}
+    await settle_reload(hass, entry)
 
 
 BAD_KEY_BODY = {"error": {"message": "API key not valid. Please pass a valid API key."}}
@@ -189,6 +197,7 @@ async def test_reauth_stale_stored_key_is_replaced_by_fresh_discovery(
     assert result["reason"] == "reauth_successful"
     assert entry.data["api_key"] == KEY
     assert entry.data["refresh_token"] == "refresh-new"
+    await settle_reload(hass, entry)
 
 
 async def test_reauth_falls_back_to_stored_key_then_asks(hass, aioclient_mock, monkeypatch):
@@ -213,6 +222,7 @@ async def test_reauth_falls_back_to_stored_key_then_asks(hass, aioclient_mock, m
     )
     assert result["reason"] == "reauth_successful"
     assert entry.data["api_key"] == KEY
+    await settle_reload(hass, entry)
 
 
 async def test_typed_key_overrides_found_key(hass, aioclient_mock, monkeypatch):

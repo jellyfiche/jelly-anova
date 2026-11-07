@@ -3,8 +3,8 @@
 import asyncio
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
@@ -65,6 +65,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass, connection.run(), "jelly_anova connection"
     )
     entry.runtime_data = runtime
+
+    async def stop_video(_event: Event) -> None:
+        await runtime.live_stream.shutdown()  # Home Assistant does not unload entries on stop
+
+    # Not listen_once: its remover errors if the stop already fired before the unload.
+    entry.async_on_unload(hass.bus.async_listen(EVENT_HOMEASSISTANT_STOP, stop_video))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
@@ -74,6 +80,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     runtime: OvenRuntime = entry.runtime_data
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         return False
+    await runtime.live_stream.shutdown()  # before the connection goes, or the stop cannot be sent
     await runtime.connection.close()
     if runtime.run_task is not None:
         _, pending = await asyncio.wait([runtime.run_task], timeout=UNLOAD_WAIT)

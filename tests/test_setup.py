@@ -143,3 +143,41 @@ async def test_real_connection_end_to_end(hass, monkeypatch):
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert ws.closed is True
     assert runtime.run_task.done()
+
+
+async def test_unload_stops_the_video_before_closing_the_connection(hass, fake, monkeypatch):
+    from custom_components.jelly_anova.stream import OvenLiveStream
+
+    order = []
+
+    async def video_stop(self):
+        order.append("video stop")
+
+    real_close = FakeConnection.close
+
+    async def close(self):
+        order.append("connection closed")
+        await real_close(self)
+
+    monkeypatch.setattr(OvenLiveStream, "shutdown", video_stop)
+    monkeypatch.setattr(FakeConnection, "close", close)
+    entry = await setup(hass)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert order[:2] == ["video stop", "connection closed"]
+
+
+async def test_home_assistant_stop_stops_the_video(hass, fake, monkeypatch):
+    from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+
+    from custom_components.jelly_anova.stream import OvenLiveStream
+
+    stops = []
+
+    async def video_stop(self):
+        stops.append(True)
+
+    monkeypatch.setattr(OvenLiveStream, "shutdown", video_stop)
+    await setup(hass)
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
+    await hass.async_block_till_done()
+    assert stops

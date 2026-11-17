@@ -19,6 +19,15 @@ The oven's **Camera** shows live video while the oven is cooking, and is unavail
 The video comes from Anova's own video service, as in the Anova app. It stops a minute after
 the last viewer closes it. There are no still pictures.
 
+## Cook status and Continue
+
+**Cook status** says where a cook is: preheating, cooking, timer finished, or waiting for you
+(to start the timer, to put the food in or take it out, or to start the next stage).
+**Continue** does what the oven is waiting for, like the Start buttons in the Anova app.
+
+To end a running timer a set time from now, use the **Update cook** action's **Minutes left**.
+Its **Timer** field sets the stage's whole length, counted from when the timer started.
+
 ## Unofficial, and it can break
 
 This project is unofficial. It is not made, supported or endorsed by Anova.
@@ -34,4 +43,6 @@ This builds on the work of others who worked out how the oven talks:
 - [XVincentX/hacs-anova-oven](https://github.com/XVincentX/hacs-anova-oven)
 - [bogd/anova-oven-api](https://github.com/bogd/anova-oven-api)
 - [awgneo/anova-culinary](https://github.com/awgneo/anova-culinary) and
-  [ampdot-io/anova-oven-mcp](https://github.com/ampdot-io/anova-oven-mcp), for how the live video works
+  [ampdot-io/anova-oven-mcp](https://github.com/ampdot-io/anova-oven-mcp), for how the live video works;
+  awgneo/anova-culinary also for the idea of a cook status and a Continue button, and for how the
+  oven counts its timer

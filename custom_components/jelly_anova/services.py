@@ -89,6 +89,7 @@ UPDATE_COOK_SCHEMA = vol.Schema(
         vol.Optional("fan"): _NUMBER,
         vol.Optional("vent"): vol.In(VENTS),
         vol.Optional("timer"): cv.time_period,
+        vol.Optional("minutes_left"): _NUMBER,
         vol.Optional("elements"): vol.All(cv.ensure_list, [vol.In(ELEMENTS)]),
         vol.Optional("start_timer"): cv.boolean,
     }
@@ -213,11 +214,17 @@ async def _update_cook(call: ServiceCall) -> None:
     }
     if data.get("timer") is not None:
         changes["timer_seconds"] = data["timer"].total_seconds()
+    if data.get("minutes_left") is not None:
+        changes["minutes_left"] = data["minutes_left"]
     if data.get("start_timer"):
         changes["start_timer"] = True
     with plain_errors():
         if not changes:
             raise CookError("Give at least one thing to change.")
+        if "timer_seconds" in changes and "minutes_left" in changes:
+            raise CookError("Give the timer's length or the minutes left, not both.")
+        if changes.get("start_timer") and "minutes_left" in changes:
+            raise CookError("Start the timer first, then set the minutes left.")
         await runtime.update(changes)
 
 

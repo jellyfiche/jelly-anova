@@ -79,6 +79,22 @@
           "cook": "Cooking"
         }
       },
+      "cook_status": {
+        "name": "Cook status",
+        "state": {
+          "idle": "Not cooking",
+          "descaling": "Descaling",
+          "preheating": "Preheating",
+          "plug_in_probe": "Waiting for the probe",
+          "start_timer": "Waiting for you to start the timer",
+          "add_food": "Waiting for the food to go in",
+          "cooking": "Cooking",
+          "start_next_stage": "Waiting for you to start the next stage",
+          "remove_food": "Waiting for the food to come out",
+          "timer_done": "Timer finished",
+          "finished": "Finished"
+        }
+      },
       "active_stage": {
         "name": "Current stage"
       },
@@ -411,6 +427,9 @@
     "button": {
       "stop": {
         "name": "Stop"
+      },
+      "continue_cook": {
+        "name": "Continue"
       }
     },
     "number": {
@@ -597,7 +616,11 @@
         },
         "timer": {
           "name": "Timer",
-          "description": "New timer length."
+          "description": "New total length of the stage's timer, counted from when the timer started, not from now. To stop a set time from now, use Minutes left."
+        },
+        "minutes_left": {
+          "name": "Minutes left",
+          "description": "Make the timer end this many minutes from now. Works while the timer is running; the time already run is added for you. The cook's maximum time still applies."
         },
         "elements": {
           "name": "Heating elements",

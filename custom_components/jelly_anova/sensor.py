@@ -25,6 +25,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .entity import JellyAnovaEntity
 from .runtime import OvenRuntime
 from .state import OvenState
+from .status import OPTIONS as COOK_STATUS_OPTIONS, cook_status
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -142,6 +143,7 @@ def _d(key: str, value_fn: Callable[[OvenState], Any], **kwargs: Any) -> JellyAn
 SENSORS: tuple[JellyAnovaSensorDescription, ...] = (
     # Cook
     _d("mode", lambda s: s.mode),
+    _d("cook_status", cook_status, device_class=SensorDeviceClass.ENUM, options=COOK_STATUS_OPTIONS),
     _d("active_stage", _active_stage),
     _d("stages_count", lambda s: s.cook.stage_count if s.cook is not None else None),
     _d("cook_time", _cook_time, **_SECONDS),

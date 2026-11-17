@@ -289,6 +289,16 @@ update_cook:
       required: false
       selector:
         duration:
+    minutes_left:
+      required: false
+      example: 15
+      selector:
+        number:
+          min: 1
+          max: 1440
+          step: 1
+          unit_of_measurement: min
+          mode: box
     elements:
       required: false
       selector:

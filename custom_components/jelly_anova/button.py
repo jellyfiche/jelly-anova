@@ -1,4 +1,4 @@
-"""The Stop button."""
+"""The Stop and Continue buttons."""
 
 from __future__ import annotations
 
@@ -12,10 +12,16 @@ from .errors import plain_errors
 from .runtime import OvenRuntime
 
 STOP = ButtonEntityDescription(key="stop", translation_key="stop")
+CONTINUE = ButtonEntityDescription(key="continue_cook", translation_key="continue_cook")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
-    async_add_entities([StopButton(entry.runtime_data, entry.entry_id, STOP)])
+    async_add_entities(
+        [
+            StopButton(entry.runtime_data, entry.entry_id, STOP),
+            ContinueButton(entry.runtime_data, entry.entry_id, CONTINUE),
+        ]
+    )
 
 
 class StopButton(JellyAnovaEntity, ButtonEntity):
@@ -31,3 +37,12 @@ class StopButton(JellyAnovaEntity, ButtonEntity):
         runtime: OvenRuntime = self.runtime
         with plain_errors():
             await runtime.stop()
+
+
+class ContinueButton(JellyAnovaEntity, ButtonEntity):
+    """Does what the cook waits on you for: starts a waiting timer or the next stage."""
+
+    async def async_press(self) -> None:
+        runtime: OvenRuntime = self.runtime
+        with plain_errors():
+            await runtime.continue_cook()

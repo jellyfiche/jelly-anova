@@ -30,6 +30,7 @@ STRINGS = Path(__file__).parents[1] / "custom_components" / "jelly_anova" / "str
 DESIGN = [
     # Cook
     ("sensor", "mode", True),
+    ("sensor", "cook_status", True),
     ("sensor", "active_stage", True),
     ("sensor", "stages_count", True),
     ("sensor", "cook_time", True),

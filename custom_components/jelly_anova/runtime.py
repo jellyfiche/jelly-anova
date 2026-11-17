@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -53,6 +54,7 @@ from .cook import (
 )
 from .errors import plain_errors
 from .state import CookInfo, OvenState, is_newer
+from .status import continue_target
 from .stream import OvenLiveStream
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,6 +67,8 @@ MAX_STOP_ROUNDS = 3  # stops the oven answered with no sign it worked, before a 
 RESTART_WAIT = 30  # after a restart, how long a due stop waits for a first report
 REPORT_WAIT = 20  # a start waits this long for a fresh report (idle reports can be 15 s apart)
 IDLE_WAIT = 30  # a start during a cook waits this long for the oven to report idle
+MAX_MINUTES_LEFT = 1440
+CONTINUE_REPEAT_SECONDS = 5  # a second Continue for the same stage within this is not sent again
 START_SEEN_WAIT = 10  # after the oven's ok, how long a start waits for a report showing the cook
 
 # Timer modes that mean it ran out. A missing timer is None, and is never one of these.
@@ -117,6 +121,27 @@ def _check_stages(stages: list[dict]) -> None:
         raise CookError("A custom cook's stages are not in the oven's format.") from None
 
 
+def _timer_for_minutes_left(cook: CookInfo, minutes: Any) -> int:
+    """The stage timer that leaves `minutes` from now. The oven's timer is the stage's total time,
+    counted from when the timer started, so the time already run is added (whole seconds, as the
+    oven counts them)."""
+    if isinstance(minutes, bool) or not isinstance(minutes, (int, float)) or not math.isfinite(minutes) or minutes < 1:
+        raise ServiceValidationError("Minutes left must be at least 1.")
+    if minutes > MAX_MINUTES_LEFT:
+        raise ServiceValidationError(f"Minutes left can be at most {MAX_MINUTES_LEFT} (24 hours).")
+    if cook.timer_initial is None or cook.timer_mode is None:
+        raise ServiceValidationError("This cook has no timer, so minutes left cannot be set.")
+    if cook.timer_waiting:
+        raise ServiceValidationError(
+            "The timer has not started yet, so minutes left cannot be counted from now. "
+            "Set the timer's length instead, or start the timer first."
+        )
+    if cook.timer_mode != "running" or cook.timer_started is None:
+        raise ServiceValidationError("The timer is not running, so minutes left cannot be set.")
+    elapsed = max(0, math.floor((dt_util.utcnow() - cook.timer_started).total_seconds()))
+    return elapsed + round(minutes * 60)
+
+
 def _custom_payload(stages: list[dict], cook_id: str, cooker_id: str) -> dict:
     """The CMD_APO_START payload for raw stages, which are sent as written."""
     _check_stages(stages)
@@ -160,6 +185,8 @@ class OvenRuntime:
         self._cooker_id: str | None = None
         self._max_minutes: int | None = None  # its own maximum: stands, whatever the timer does
         self._timer_seen = False  # its timer has been seen running
+        self._continued: str | None = None  # the stage the last Continue started, and when
+        self._continued_at = 0.0
         self._last_start: datetime | None = None  # when a start last went out
 
         # Sending the stop.
@@ -570,6 +597,9 @@ class OvenRuntime:
             raise HomeAssistantError("No cook is running to change.")
         if state.cook.in_end_stage:
             raise HomeAssistantError("This cook has finished, so it can no longer be changed.")
+        if "minutes_left" in changes:
+            changes = dict(changes)
+            changes["timer_seconds"] = _timer_for_minutes_left(state.cook, changes.pop("minutes_left"))
         stage = updated_stage(state.cook.active_stage, changes)
         try:
             await self.connection.send("CMD_APO_UPDATE_COOK_STAGE", stage)
@@ -603,6 +633,28 @@ class OvenRuntime:
         if stage_id not in [stage.get("id") for stage in cook.stages]:
             raise ServiceValidationError("That is not a stage of the running cook.")
         await self._direct("CMD_APO_START_STAGE", {"stageId": stage_id})
+
+    async def continue_cook(self) -> None:
+        """Do what the cook is waiting on you for, as the app's Start buttons do.
+
+        A timer waiting for you is released the way update_cook's start_timer does (proven); a
+        stage waiting for you is started with CMD_APO_START_STAGE, as next_stage does (proven).
+        A second press for the same stage before a report shows the first is not sent again.
+        Anything else is refused in plain words.
+        """
+        self._running_cook()
+        target = continue_target(self.state)
+        if target is None:
+            raise ServiceValidationError("The oven is not waiting for you to start a timer or a stage.")
+        kind, stage_id = target
+        if kind == "timer":
+            await self.update({"start_timer": True})
+            return
+        now = time.monotonic()
+        if self._continued == stage_id and now - self._continued_at < CONTINUE_REPEAT_SECONDS:
+            return
+        await self._direct("CMD_APO_START_STAGE", {"stageId": stage_id})
+        self._continued, self._continued_at = stage_id, now
 
     async def update_stages(self, stages: list[dict]) -> None:
         """Replace the stages of the running cook (the temperature cap applies).

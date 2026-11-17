@@ -648,7 +648,7 @@ def test_fahrenheit_selectors_and_no_typos():
 
 
 def test_control_names_spelled():
-    words = set("stop target temperature fan door light preference display unit celsius fahrenheit".split())
+    words = set("stop continue target temperature fan door light preference display unit celsius fahrenheit".split())
     controls = json.loads((PACKAGE / "strings.json").read_text())["entity"]
     for domain in ("button", "number", "switch", "select"):
         for key, value in controls[domain].items():

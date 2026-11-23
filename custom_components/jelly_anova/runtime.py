@@ -383,6 +383,29 @@ class OvenRuntime:
     def _fresh_idle(self) -> bool:
         return self._fresh(self.state) and self.state.mode == "idle"
 
+    async def _freshen(self, wait: bool = True) -> None:
+        """Ask an idle oven for a report from now, when its last one is over 60 s old.
+
+        Since oven firmware 1.4.9 an idle oven reports only every few minutes unless the Anova
+        app is open, but it reports within a second of a command. Sending the door light
+        preference it already has changes nothing and brings that report (proven on the oven).
+        Nothing is sent when the last report is fresh, was not idle, or gave no preference; a
+        failed send is left to the caller, whose own check then says what is wrong.
+        """
+        state = self.state
+        if state is None or self._fresh(state) or state.mode != "idle":
+            return
+        if state.door_lamp_preference not in ("on", "off"):
+            return
+        try:
+            await self.connection.send(
+                "CMD_APO_SET_LAMP_PREFERENCE", {"on": state.door_lamp_preference == "on"}
+            )
+        except OvenError:
+            return
+        if wait:
+            await self._wait_for(self._fresh, REPORT_WAIT)
+
     def _other_cook_running(self, cook_id: str) -> bool:
         """True only when a fresh report shows a different cook. Not knowing is not True."""
         state = self.state
@@ -718,6 +741,8 @@ class OvenRuntime:
     async def set_fan(self, speed: float) -> None:
         if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not 0 <= speed <= 100:
             raise ServiceValidationError("Fan speed must be 0 to 100.")
+        if int(speed) == 0 and self._cook_id is None:
+            await self._freshen()
         # A saved cook counts even with idle reports: idle can lag a start.
         if int(speed) == 0 and (self._cook_id is not None or not self._fresh_idle()):
             raise ServiceValidationError(FAN_OFF_REFUSED)
@@ -829,6 +854,7 @@ class OvenRuntime:
         it would lose the only stop time it has.
         """
         if self._cook_id is None:
+            await self._freshen(wait=False)  # the wait below takes the report it brings
             # A report from before the last start proves nothing. Reports only count for 60 s,
             # so once that start is over 60 s old any fresh idle report is after it.
             since = self._last_start

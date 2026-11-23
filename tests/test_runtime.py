@@ -24,13 +24,14 @@ from custom_components.jelly_anova.state import parse_state
 STOP = "CMD_APO_STOP"
 START = "CMD_APO_START"
 UPDATE = "CMD_APO_UPDATE_COOK_STAGE"
+POKE = "CMD_APO_SET_LAMP_PREFERENCE"
 OTHER = "ios-someone-elses-cook"
 TIMED = build_start(CookRequest(temperature_f=350, minutes=30), "x")[0]["stages"]
 ONE_STAGE = TIMED[:1]
 NO_TIMER = build_start(CookRequest(temperature_c=100), "x")[0]["stages"]
 
 
-def report(mode="cook", cook_id=None, stages=None, index=0, stage_mode="running", timer=None, dry=None, wet=None, at=None, timer_started=None):
+def report(mode="cook", cook_id=None, stages=None, index=0, stage_mode="running", timer=None, dry=None, wet=None, at=None, timer_started=None, lamp=None):
     """An oven report; idle reports carry no cook section, as on the real oven."""
     nodes = {
         "temperatureBulbs": {
@@ -39,6 +40,8 @@ def report(mode="cook", cook_id=None, stages=None, index=0, stage_mode="running"
             "wet": {"current": {"celsius": wet}},
         }
     }
+    if lamp is not None:
+        nodes["doorLamp"] = {"preferences": lamp}
     if timer is not None:
         nodes["timer"] = {"mode": timer}
         if timer_started is not None:
@@ -243,6 +246,63 @@ async def test_start_without_a_fresh_report_stops_nothing_and_starts_nothing(rig
     with pytest.raises(HomeAssistantError):
         await rt.start(CookRequest(temperature_f=350))
     assert rig.conn.sent == []
+
+
+# Firmware 1.4.9: an idle oven reports every few minutes, but at once after a command.
+
+
+def answers_the_poke(rig, lamp="on"):
+    rig.conn.on_send = lambda command: command == POKE and rig.conn.feed(report("idle", lamp=lamp))
+
+
+async def test_start_on_a_stale_idle_report_asks_for_a_new_one(rig, freezer):
+    rt = await rig.boot()
+    rt.on_state(report("idle", lamp="off"))
+    await rig.advance(freezer, 200)
+    answers_the_poke(rig, "off")
+    await rt.start(CookRequest(temperature_f=350))
+    assert rig.conn.sent[0] == (POKE, {"on": False})  # the preference it already has
+    assert rig.conn.order == [POKE, START]
+
+
+async def test_start_is_refused_when_the_poke_brings_no_report(rig, monkeypatch):
+    monkeypatch.setattr(runtime_module, "REPORT_WAIT", 0.05)  # no frozen clock: the wait must run out
+    rt = await rig.boot()
+    rt.on_state(report("idle", lamp="on", at=dt_util.utcnow() - timedelta(seconds=200)))
+    with pytest.raises(HomeAssistantError, match="not reporting"):
+        await rt.start(CookRequest(temperature_f=350))
+    assert rig.conn.order == [POKE]
+
+
+async def test_no_poke_on_a_fresh_report_an_unknown_preference_or_a_cook(rig):
+    rt = await rig.boot()
+    old = dt_util.utcnow() - timedelta(seconds=200)
+    rt.on_state(report("idle", lamp="on"))
+    await rt._freshen()  # fresh
+    rt.on_state(report("idle", at=old))  # no preference reported
+    await rt._freshen()
+    rt.on_state(report("cook", OTHER, at=old))
+    await rt._freshen()  # a cook that went quiet is not an idle oven
+    assert rig.conn.sent == []
+
+
+async def test_a_poke_that_cannot_be_sent_is_left_to_the_callers_check(rig, monkeypatch):
+    monkeypatch.setattr(runtime_module, "REPORT_WAIT", 0.05)
+    rt = await rig.boot()
+    rt.on_state(report("idle", lamp="on", at=dt_util.utcnow() - timedelta(seconds=200)))
+    rig.conn.errors = [OvenOffline("down")]
+    with pytest.raises(HomeAssistantError, match="not reporting"):
+        await rt.start(CookRequest(temperature_f=350))
+    assert rig.conn.order == [POKE]
+
+
+async def test_fan_off_on_a_stale_idle_report_asks_for_a_new_one(rig, freezer):
+    rt = await rig.boot()
+    rt.on_state(report("idle", lamp="on"))
+    await rig.advance(freezer, 200)
+    answers_the_poke(rig)
+    await rt.set_fan(0)
+    assert rig.conn.sent == [(POKE, {"on": True}), ("CMD_APO_SET_FAN", {"speed": 0})]
 
 
 async def test_start_waits_for_a_fresh_report(rig):

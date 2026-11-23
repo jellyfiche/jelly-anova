@@ -1,5 +1,13 @@
 {
   "entity": {
+    "button": {
+      "continue_cook": {
+        "default": "mdi:play-circle-outline"
+      },
+      "stop": {
+        "default": "mdi:stop-circle-outline"
+      }
+    },
     "number": {
       "fan": {
         "default": "mdi:fan"

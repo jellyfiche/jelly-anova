@@ -233,7 +233,11 @@ async def test_unavailable_when_stale(hass, entry, freezer):
     await push(hass, entry, fresh(load("idle.json")))
     assert state_of(hass, "sensor", "mode").state == "idle"
     assert state_of(hass, "binary_sensor", "door_closed").state == "on"
-    freezer.tick(timedelta(seconds=61))
+    freezer.tick(timedelta(seconds=61))  # an idle oven may report only every few minutes (firmware 1.4.9)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert state_of(hass, "sensor", "mode").state == "idle"
+    freezer.tick(timedelta(seconds=540))  # past 10 minutes
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
     assert state_of(hass, "sensor", "mode").state == STATE_UNAVAILABLE

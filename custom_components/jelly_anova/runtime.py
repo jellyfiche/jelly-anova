@@ -37,6 +37,7 @@ from .const import (
     EVENT_TARGET_REACHED,
     MAX_C,
     MAX_F,
+    IDLE_SHOWN_SECONDS,
     STALE_SECONDS,
 )
 from .cook import (
@@ -215,7 +216,7 @@ class OvenRuntime:
 
     @property
     def available(self) -> bool:
-        return self._connected and self._fresh(self.state)
+        return self._connected and self._shown(self.state)
 
     @property
     def connected(self) -> bool:
@@ -365,6 +366,15 @@ class OvenRuntime:
         if state is None:
             return False
         return dt_util.utcnow() - state.updated <= timedelta(seconds=STALE_SECONDS)
+
+    @staticmethod
+    def _shown(state: OvenState | None) -> bool:
+        """Recent enough to show: 60 s after a cook report, 10 minutes after an idle one.
+        Only what entities show; stops and checks still need a report within STALE_SECONDS."""
+        if state is None:
+            return False
+        limit = IDLE_SHOWN_SECONDS if state.mode == "idle" else STALE_SECONDS
+        return dt_util.utcnow() - state.updated <= timedelta(seconds=limit)
 
     @staticmethod
     def _cook_reported(state: OvenState | None) -> bool:

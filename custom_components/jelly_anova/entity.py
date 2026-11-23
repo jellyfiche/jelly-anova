@@ -14,7 +14,7 @@ DEVICE_NAME = "Anova Precision Oven"
 
 
 class JellyAnovaEntity(Entity):
-    """Reads the runtime. Unavailable whenever the runtime is (no fresh report for 60 s)."""
+    """Reads the runtime. Unavailable whenever the runtime is (no report for 60 s in a cook, 10 minutes idle)."""
 
     _attr_has_entity_name = True
     _attr_should_poll = False

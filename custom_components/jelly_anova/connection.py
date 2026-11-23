@@ -31,7 +31,8 @@ FIRST_DELAY = 5
 MAX_DELAY = 300
 BACKUP_WAIT = 8  # seconds the backup stop waits for the oven's reply
 CONNECT_TIMEOUT = 15  # seconds allowed to fetch a token and open a websocket
-REPORT_SILENCE = 180  # seconds with no live report before reconnecting (idle reports: every 15 s)
+REPORT_SILENCE = 180  # seconds with no live report before reconnecting, in a cook
+REPORT_SILENCE_IDLE = 600  # the same while idle: since firmware 1.4.9 an idle oven reports every few minutes
 
 # Failures that mean "try again later". Their text is never logged.
 _RETRY_ERRORS = (CannotConnect, aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError)
@@ -215,13 +216,15 @@ class OvenConnection:
         The heartbeat only shows the cloud answers, not that the oven's reports still arrive.
         """
         while not reader.done():
-            left = self._last_report + REPORT_SILENCE - time.monotonic()
+            idle = self._state is None or self._state.mode in (None, "idle")
+            left = self._last_report + (REPORT_SILENCE_IDLE if idle else REPORT_SILENCE) - time.monotonic()
             if left <= 0:
                 _LOGGER.debug("No live report from Anova, reconnecting")
                 reader.cancel()  # its own cleanup closes the socket and marks it down
                 await asyncio.wait([reader])
                 return
-            await asyncio.wait([reader], timeout=left)
+            # Wake at least every REPORT_SILENCE, so a cook starting mid-wait shortens the limit.
+            await asyncio.wait([reader], timeout=min(left, REPORT_SILENCE))
 
     async def _backoff(self) -> None:
         delay = self._delay

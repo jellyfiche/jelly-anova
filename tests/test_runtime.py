@@ -1204,13 +1204,24 @@ async def test_stale_60s_unavailable(rig, freezer):
     told = []
     rt.add_listener(lambda: told.append(rt.available))
     assert rt.available is False
-    rt.on_state(report("idle"))
+    rt.on_state(report("cook"))
     assert rt.available is True
     await rig.advance(freezer, 59)
     assert rt.available is True
     await rig.advance(freezer, 6)
     assert rt.available is False
     assert told[-1] is False  # entities are told without a new report
+
+
+async def test_idle_report_shown_10_minutes(rig, freezer):
+    """Firmware 1.4.9: an idle oven reports every few minutes; entities stay up 10 minutes."""
+    rt = await rig.boot()
+    rt.on_state(report("idle"))
+    await rig.advance(freezer, 9 * 60)
+    assert rt.available is True
+    assert rt._fresh(rt.state) is False  # stops and checks still want a report within 60 s
+    await rig.advance(freezer, 70)
+    assert rt.available is False
 
 
 async def test_disconnected_unavailable(rig):

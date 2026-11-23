@@ -154,12 +154,13 @@ async def stop(conn, task):
 async def test_a_socket_with_no_reports_for_three_minutes_is_reopened(monkeypatch):
     assert connection.REPORT_SILENCE == 180
     monkeypatch.setattr(connection, "REPORT_SILENCE", 0.05)
+    monkeypatch.setattr(connection, "REPORT_SILENCE_IDLE", 30)  # this oven is cooking
     quiet, next_one = FakeWS(), FakeWS()
     session = FakeSession(quiet, next_one)
     conn = make(session)
     task = await started(conn)
     await until(lambda: session.calls)
-    quiet.push(report(FUTURE))
+    quiet.push(report(FUTURE, "cook"))
     await asyncio.wait_for(wait_until(lambda: len(session.calls) == 2), 2)
     assert quiet.closed
     assert conn.status[:2] == [True, False]
@@ -168,6 +169,7 @@ async def test_a_socket_with_no_reports_for_three_minutes_is_reopened(monkeypatc
 
 async def test_only_live_reports_keep_a_socket_open(monkeypatch):
     monkeypatch.setattr(connection, "REPORT_SILENCE", 0.05)
+    monkeypatch.setattr(connection, "REPORT_SILENCE_IDLE", 0.05)
     ws = FakeWS()
     session = FakeSession(ws, FakeWS())
     conn = make(session)
@@ -184,6 +186,7 @@ async def test_only_live_reports_keep_a_socket_open(monkeypatch):
 
 async def test_live_reports_hold_the_socket_open(monkeypatch):
     monkeypatch.setattr(connection, "REPORT_SILENCE", 0.5)
+    monkeypatch.setattr(connection, "REPORT_SILENCE_IDLE", 0.5)
     ws = FakeWS()
     session = FakeSession(ws)
     conn = make(session)
@@ -193,6 +196,23 @@ async def test_live_reports_hold_the_socket_open(monkeypatch):
         ws.push(report(f"2999-01-01T00:00:{second}Z"))
         await asyncio.sleep(0.1)  # two seconds in all, each gap under the limit
     assert len(session.calls) == 1 and not ws.closed
+    await stop(conn, task)
+
+
+async def test_an_idle_oven_gets_ten_minutes_before_a_reopen(monkeypatch):
+    """Firmware 1.4.9: an idle oven reports every few minutes unless the Anova app is open."""
+    assert connection.REPORT_SILENCE_IDLE == 600
+    monkeypatch.setattr(connection, "REPORT_SILENCE", 0.05)
+    monkeypatch.setattr(connection, "REPORT_SILENCE_IDLE", 0.6)
+    ws = FakeWS()
+    session = FakeSession(ws, FakeWS())
+    conn = make(session)
+    task = await started(conn)
+    await until(lambda: session.calls)
+    ws.push(report(FUTURE))  # idle
+    await asyncio.sleep(0.3)  # past the cook limit, inside the idle one
+    assert len(session.calls) == 1 and not ws.closed
+    await asyncio.wait_for(wait_until(lambda: len(session.calls) == 2), 2)
     await stop(conn, task)
 
 

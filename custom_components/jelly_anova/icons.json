@@ -1,0 +1,9 @@
+{
+  "entity": {
+    "number": {
+      "fan": {
+        "default": "mdi:fan"
+      }
+    }
+  }
+}

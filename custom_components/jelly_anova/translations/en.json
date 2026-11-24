@@ -140,10 +140,10 @@
         "name": "Target temperature"
       },
       "temperature_probe": {
-        "name": "Probe temperature"
+        "name": "Temperature"
       },
       "target_temperature_probe": {
-        "name": "Target probe temperature"
+        "name": "Target temperature"
       },
       "steam_generator_mode": {
         "name": "Steam mode",
@@ -286,7 +286,7 @@
         }
       },
       "probe_connected": {
-        "name": "Probe connection"
+        "name": "Connection"
       },
       "vent_closed": {
         "name": "Vent closed",

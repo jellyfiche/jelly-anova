@@ -23,6 +23,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .entity import JellyAnovaEntity
+from .parts import DIAGNOSTIC
 from .runtime import OvenRuntime
 from .state import OvenState
 from .status import OPTIONS as COOK_STATUS_OPTIONS, cook_status
@@ -137,6 +138,8 @@ _DIAGNOSTIC_OFF = {"entity_category": EntityCategory.DIAGNOSTIC, "entity_registr
 
 
 def _d(key: str, value_fn: Callable[[OvenState], Any], **kwargs: Any) -> JellyAnovaSensorDescription:
+    if key in DIAGNOSTIC:
+        kwargs.setdefault("entity_category", EntityCategory.DIAGNOSTIC)
     return JellyAnovaSensorDescription(key=key, translation_key=key, value_fn=value_fn, **kwargs)
 
 
@@ -209,6 +212,7 @@ SENSORS: tuple[JellyAnovaSensorDescription, ...] = (
         key="total_cook_hours",
         translation_key="total_cook_hours",
         runtime_fn=lambda runtime: round(runtime.total_cook_hours, 2),
+        entity_category=EntityCategory.DIAGNOSTIC,
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.HOURS,
         state_class=SensorStateClass.TOTAL_INCREASING,

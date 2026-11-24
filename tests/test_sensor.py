@@ -19,7 +19,9 @@ from custom_components.jelly_anova.const import DOMAIN
 from custom_components.jelly_anova.sensor import SENSORS
 from custom_components.jelly_anova.state import parse_state
 
-from .test_setup import fake, setup  # noqa: F401 - fake is a fixture
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from .test_setup import DATA, fake, setup  # noqa: F401 - fake is a fixture
 
 FIXTURES = Path(__file__).parent / "fixtures"
 TRANSLATIONS = Path(__file__).parents[1] / "custom_components" / "jelly_anova" / "translations" / "en.json"
@@ -199,13 +201,71 @@ def test_old_integration_keys_are_kept():
 async def test_device_is_named_and_ids_follow_the_names(hass, entry):
     registry = er.async_get(hass)
     devices = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
-    assert [d.name for d in devices] == ["Anova Precision Oven"]
+    assert sorted(d.name for d in devices) == [
+        "Anova Precision Oven",
+        "Anova Precision Oven Probe",
+        "Anova Precision Oven Steam and water",
+    ]
     assert registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_temperature_probe") == (
         "sensor.anova_precision_oven_probe_temperature"
     )
     assert registry.async_get_entity_id("binary_sensor", DOMAIN, f"{entry.entry_id}_sous_vide") == (
         "binary_sensor.anova_precision_oven_sous_vide_mode"
     )
+
+
+async def test_parts_hang_off_the_oven_and_hold_their_entities(hass, entry):
+    devices = dr.async_get(hass)
+    registry = er.async_get(hass)
+    oven = devices.async_get_device_by_identifier((DOMAIN, entry.entry_id), entry.entry_id)
+    steam = devices.async_get_device_by_identifier((DOMAIN, f"{entry.entry_id}_steam"), entry.entry_id)
+    probe = devices.async_get_device_by_identifier((DOMAIN, f"{entry.entry_id}_probe"), entry.entry_id)
+    assert steam.via_device_id == oven.id and probe.via_device_id == oven.id
+
+    def device_of(domain, key):
+        return registry.async_get(entity_id(hass, domain, key)).device_id
+
+    for domain, key in (("binary_sensor", "water_tank_empty"), ("binary_sensor", "descale_needed"), ("sensor", "boiler_watts")):
+        assert device_of(domain, key) == steam.id, key
+    for domain, key in (("sensor", "temperature_probe"), ("sensor", "target_temperature_probe"), ("binary_sensor", "probe_connected")):
+        assert device_of(domain, key) == probe.id, key
+    for domain, key in (("sensor", "mode"), ("sensor", "relative_humidity"), ("sensor", "top_watts"), ("binary_sensor", "door_closed")):
+        assert device_of(domain, key) == oven.id, key
+
+
+async def test_an_existing_entity_keeps_its_id_when_it_moves_to_a_part(hass, fake):  # noqa: F811
+    """An install from before the parts: same unique id, so the id and its history stay."""
+    made = MockConfigEntry(domain=DOMAIN, data=DATA)
+    made.add_to_hass(hass)
+    old_device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=made.entry_id, identifiers={(DOMAIN, made.entry_id)}, name="Anova Precision Oven"
+    )
+    registry = er.async_get(hass)
+    kept = registry.async_get_or_create(
+        "sensor", DOMAIN, f"{made.entry_id}_temperature_probe", config_entry=made,
+        device_id=old_device.id, suggested_object_id="kitchen_anova_precision_oven_probe_temperature",
+    )
+    assert await hass.config_entries.async_setup(made.entry_id)
+    await hass.async_block_till_done()
+    after = registry.async_get(kept.entity_id)
+    assert after is not None and after.unique_id == kept.unique_id
+    probe = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, f"{made.entry_id}_probe"), made.entry_id)
+    assert after.device_id == probe.id
+
+
+async def test_sections(hass, entry):
+    registry = er.async_get(hass)
+
+    def category(domain, key):
+        return registry.async_get(entity_id(hass, domain, key)).entity_category
+
+    for domain, key in (("sensor", "top_watts"), ("sensor", "boiler_temperature"), ("sensor", "cook_origin"),
+                        ("sensor", "total_cook_hours"), ("sensor", "firmware"), ("binary_sensor", "any_failed")):
+        assert category(domain, key) == "diagnostic", key
+    for domain, key in (("sensor", "mode"), ("sensor", "temperature"), ("sensor", "relative_humidity"),
+                        ("sensor", "temperature_probe"), ("binary_sensor", "water_tank_empty"), ("binary_sensor", "door_closed")):
+        assert category(domain, key) is None, key
+    assert category("switch", "door_light_preference") == "config"
 
 
 async def test_temperature_shows_fahrenheit(hass, entry):

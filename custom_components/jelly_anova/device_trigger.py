@@ -30,7 +30,9 @@ TRIGGER_SCHEMA = DEVICE_TRIGGER_BASE_SCHEMA.extend(
 async def async_get_triggers(hass: HomeAssistant, device_id: str) -> list[dict[str, str]]:
     """List the triggers of an oven device (and nothing for any other device)."""
     device = dr.async_get(hass).async_get(device_id)
-    if device is None or not any(domain == DOMAIN for domain, _ in device.identifiers):
+    # The oven itself, not its parts: a part's identifier carries a suffix and is not an entry id.
+    entries = set(device.config_entries) if device is not None else set()
+    if device is None or not any(d == DOMAIN and ident in entries for d, ident in device.identifiers):
         return []
     return [
         {

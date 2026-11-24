@@ -16,6 +16,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .entity import JellyAnovaEntity
+from .parts import DIAGNOSTIC
 from .runtime import OvenRuntime
 from .state import OvenState
 
@@ -35,6 +36,8 @@ _RARE = {"entity_category": EntityCategory.DIAGNOSTIC, "entity_registry_enabled_
 
 
 def _d(key: str, value_fn: Callable[[OvenState], bool | None], **kwargs) -> JellyAnovaBinaryDescription:
+    if key in DIAGNOSTIC:
+        kwargs.setdefault("entity_category", EntityCategory.DIAGNOSTIC)
     return JellyAnovaBinaryDescription(key=key, translation_key=key, value_fn=value_fn, **kwargs)
 
 

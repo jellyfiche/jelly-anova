@@ -6,12 +6,14 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
 from .auth import AnovaAuth
 from .connection import OvenConnection
 from .const import DOMAIN
+from .entity import oven_device
 from .runtime import OvenRuntime
 from .services import async_setup_services
 from .state import OvenState
@@ -71,6 +73,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Not listen_once: its remover errors if the stop already fired before the unload.
     entry.async_on_unload(hass.bus.async_listen(EVENT_HOMEASSISTANT_STOP, stop_video))
+    # The oven's device first: its parts point at it (via_device), whichever platform loads first.
+    dr.async_get(hass).async_get_or_create(config_entry_id=entry.entry_id, **oven_device(entry.entry_id))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 

@@ -33,7 +33,7 @@ async def oven(hass):
 
 async def test_a_part_of_the_oven_has_no_triggers(hass, fake):
     entry, _ = await oven(hass)
-    part = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, f"{entry.entry_id}_probe"), entry.entry_id)
+    part = dr.async_get(hass).async_get_device_by_identifier((DOMAIN, f"{entry.entry_id}_maintenance"), entry.entry_id)
     assert part is not None
     triggers = await async_get_device_automations(hass, DeviceAutomationType.TRIGGER, [part.id])
     assert [t for t in triggers[part.id] if t["domain"] == DOMAIN] == []

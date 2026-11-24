@@ -132,7 +132,6 @@ _USAGE = {
     "native_unit_of_measurement": UnitOfTime.HOURS,
     "state_class": SensorStateClass.TOTAL_INCREASING,
     "suggested_display_precision": 1,
-    "entity_category": EntityCategory.DIAGNOSTIC,
 }
 _DIAGNOSTIC_OFF = {"entity_category": EntityCategory.DIAGNOSTIC, "entity_registry_enabled_default": False}
 
@@ -200,19 +199,17 @@ SENSORS: tuple[JellyAnovaSensorDescription, ...] = (
     _d("rear_element_hours", _hours("rear"), **_USAGE),
     _d("boiler_hours", _hours("boiler"), **_USAGE),
     _d("evaporator_hours", _hours("evaporator"), **_USAGE),
-    _d("firmware", lambda s: s.firmware, entity_category=EntityCategory.DIAGNOSTIC),
+    _d("firmware", lambda s: s.firmware),
     _d(
         "firmware_updated",
         lambda s: s.firmware_updated,
         device_class=SensorDeviceClass.TIMESTAMP,
-        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     # Home Assistant's own count of cooking time
     JellyAnovaSensorDescription(
         key="total_cook_hours",
         translation_key="total_cook_hours",
         runtime_fn=lambda runtime: round(runtime.total_cook_hours, 2),
-        entity_category=EntityCategory.DIAGNOSTIC,
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.HOURS,
         state_class=SensorStateClass.TOTAL_INCREASING,

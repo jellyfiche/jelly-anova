@@ -7,6 +7,7 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
@@ -14,6 +15,7 @@ from .auth import AnovaAuth
 from .connection import OvenConnection
 from .const import DOMAIN
 from .entity import oven_device
+from .parts import PART_NAMES, RETIRED_PARTS
 from .runtime import OvenRuntime
 from .services import async_setup_services
 from .state import OvenState
@@ -76,7 +78,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # The oven's device first: its parts point at it (via_device), whichever platform loads first.
     dr.async_get(hass).async_get_or_create(config_entry_id=entry.entry_id, **oven_device(entry.entry_id))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _tidy_devices(hass, entry)
     return True
+
+
+def _tidy_devices(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove the devices of parts that no longer exist, and put a new part in the oven's area."""
+    devices = dr.async_get(hass)
+    entities = er.async_get(hass)
+    oven = devices.async_get_device_by_identifier((DOMAIN, entry.entry_id), entry.entry_id)
+    for part in RETIRED_PARTS:
+        old = devices.async_get_device_by_identifier((DOMAIN, f"{entry.entry_id}_{part}"), entry.entry_id)
+        if old is not None and not er.async_entries_for_device(entities, old.id, include_disabled_entities=True):
+            devices.async_update_device(old.id, remove_config_entry_id=entry.entry_id)
+    for part in PART_NAMES:
+        made = devices.async_get_device_by_identifier((DOMAIN, f"{entry.entry_id}_{part}"), entry.entry_id)
+        if made is not None and oven is not None and made.area_id is None and oven.area_id is not None:
+            devices.async_update_device(made.id, area_id=oven.area_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

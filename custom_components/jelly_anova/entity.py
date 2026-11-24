@@ -7,7 +7,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity, EntityDescription
 
 from .const import DOMAIN
-from .parts import PART_MODELS, PART_NAMES, part_of
+from .parts import PART_NAMES, part_of
 from .runtime import OvenRuntime
 from .state import OvenState
 
@@ -28,7 +28,7 @@ def part_device(entry_id: str, part: str) -> DeviceInfo:
         identifiers={(DOMAIN, f"{entry_id}_{part}")},
         name=f"{DEVICE_NAME} {PART_NAMES[part]}",
         manufacturer=MANUFACTURER,
-        model=PART_MODELS[part],
+        model=MODEL,
         via_device=(DOMAIN, entry_id),
     )
 

@@ -57,7 +57,7 @@ BINARY_SENSORS: tuple[JellyAnovaBinaryDescription, ...] = (
     _d("lamp_on", lambda s: s.lamp_on, device_class=BinarySensorDeviceClass.LIGHT),
     _d("sous_vide", lambda s: (None if s.cook.in_end_stage else s.cook.sous_vide) if s.cook is not None else None),
     _d("oven_empty", lambda s: s.oven_empty),
-    _d("online", lambda s: s.online, device_class=BinarySensorDeviceClass.CONNECTIVITY, **_DIAGNOSTIC),
+    _d("online", lambda s: s.online, device_class=BinarySensorDeviceClass.CONNECTIVITY),
     _d("descale_needed", lambda s: s.descale_needed, device_class=_PROBLEM),
     _d("any_failed", lambda s: s.any_failed, device_class=_PROBLEM),
     # Reported but rarely useful: present, off until switched on

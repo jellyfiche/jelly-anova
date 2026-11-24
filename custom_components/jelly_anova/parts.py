@@ -1,56 +1,77 @@
-"""Where each entity sits: on the oven, or on one of its two parts, and in which section.
+"""Where each entity sits: on the oven, or on its Maintenance device, and in which section.
 
-The oven is the main device. The parts hang off it (via_device), as a printer's material units
-do: "Steam and water" is what gets filled, emptied and descaled; "Probe" is the plug-in probe.
-Diagnostic holds what explains a fault and is not watched while cooking. Keys are entity
-description keys; unique ids do not change, so existing entity ids stay as they are.
+The oven holds what is watched and set while cooking (the probe included). Maintenance hangs off
+it (via_device) and holds what is checked between cooks: water and tanks, wear, health. Live
+readings that explain a cook (element, boiler and evaporator power) are Diagnostic on the oven.
+Keys are entity description keys; unique ids do not change, so existing entity ids stay.
 """
 
 from __future__ import annotations
 
-STEAM = "steam"
-PROBE = "probe"
+MAINTENANCE = "maintenance"
 
-PART_NAMES = {STEAM: "Steam and water", PROBE: "Probe"}
-PART_MODELS = {STEAM: "Steam generator and tanks", PROBE: "Food probe"}
+PART_NAMES = {MAINTENANCE: "Maintenance"}
+
+# Parts of earlier releases (0.4.0): their devices are removed once their entities have moved.
+RETIRED_PARTS = ("steam", "probe")
 
 _PARTS = {
-    STEAM: {
-        # sensors
-        "boiler_watts",
-        "evaporator_watts",
-        "boiler_temperature",
-        "evaporator_temperature",
-        "boiler_hours",
-        "evaporator_hours",
-        "boiler_pump_faults",
-        "boiler_valve_faults",
-        # binary sensors
+    MAINTENANCE: {
+        # water (binary sensors)
         "water_low",
         "water_tank_empty",
         "water_tank_removed",
         "waste_tank_full",
         "waste_tank_removed",
         "descale_needed",
+        # wear
+        "top_element_hours",
+        "bottom_element_hours",
+        "rear_element_hours",
+        "boiler_hours",
+        "evaporator_hours",
+        "total_cook_hours",
+        # health
+        "any_failed",
+        "online",
+        "firmware",
+        "firmware_updated",
+        # rarely useful, off by default
+        "cavity_overheated",
+        "triacs_failed",
+        "lamp_failed",
+        "top_element_failed",
+        "bottom_element_failed",
+        "rear_element_failed",
         "boiler_failed",
         "evaporator_failed",
+        "fan_failed",
+        "internal_line_faults",
+        "boiler_pump_faults",
+        "boiler_valve_faults",
+        "mains_voltage",
+        "mains_frequency",
+        "hardware_version",
+        "display_board_temperature",
+        "exhaust_fan_speed",
+        "led_fan_speed",
+        "power_board_fan",
+        "display_fan_speed",
+        "last_disconnected",
     },
-    PROBE: {"temperature_probe", "target_temperature_probe", "probe_connected"},
 }
 
-# Shown under Diagnostic (those already marked in their own description are not repeated here).
+# Shown under Diagnostic on the oven (the off-by-default ones carry it in their own description).
 DIAGNOSTIC = frozenset(
     {
+        "top_watts",
+        "bottom_watts",
+        "rear_watts",
         "boiler_watts",
         "evaporator_watts",
         "boiler_temperature",
         "evaporator_temperature",
-        "top_watts",
-        "bottom_watts",
-        "rear_watts",
         "cook_origin",
-        "total_cook_hours",
-        "any_failed",
     }
 )
 
